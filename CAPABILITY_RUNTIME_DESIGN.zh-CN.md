@@ -17,10 +17,10 @@
 
 但这些能力目前主要以硬编码方式存在于以下模块中：
 
-- `src/pyi/agent.py`
-- `src/pyi/tools.py`
-- `src/pyi/cli.py`
-- `src/pyi/config.py`
+- `src/astra/agent.py`
+- `src/astra/tools.py`
+- `src/astra/cli.py`
+- `src/astra/config.py`
 
 这导致两个直接问题：
 
@@ -93,21 +93,21 @@
 
 建议新增模块结构：
 
-- `src/pyi/runtime/__init__.py`
-- `src/pyi/runtime/runtime.py`
-- `src/pyi/runtime/registries.py`
-- `src/pyi/runtime/loader.py`
-- `src/pyi/runtime/hooks.py`
-- `src/pyi/runtime/resources.py`
-- `src/pyi/runtime/diagnostics.py`
-- `src/pyi/runtime/builtin_capabilities.py`
+- `src/astra/runtime/__init__.py`
+- `src/astra/runtime/runtime.py`
+- `src/astra/runtime/registries.py`
+- `src/astra/runtime/loader.py`
+- `src/astra/runtime/hooks.py`
+- `src/astra/runtime/resources.py`
+- `src/astra/runtime/diagnostics.py`
+- `src/astra/runtime/builtin_capabilities.py`
 
 可选后续模块：
 
-- `src/pyi/runtime/skills.py`
-- `src/pyi/runtime/prompts.py`
-- `src/pyi/runtime/compaction.py`
-- `src/pyi/runtime/extensions.py`
+- `src/astra/runtime/skills.py`
+- `src/astra/runtime/prompts.py`
+- `src/astra/runtime/compaction.py`
+- `src/astra/runtime/extensions.py`
 
 ## 5. 核心对象模型
 
@@ -290,7 +290,7 @@ class PromptFragment:
 建议用途：
 
 - 加载工作区说明文件
-- 加载 `.pyi/` 下的 agent 规则文件
+- 加载 `.astra/` 下的 agent 规则文件
 - 加载 skill 文档
 - 加载项目局部上下文摘要
 
@@ -326,16 +326,16 @@ class CompactionStrategy(Protocol):
 
 ### 7.1 全局目录
 
-- `~/.pyi-python/capabilities/`
-- `~/.pyi-python/prompts/`
-- `~/.pyi-python/skills/`
+- `~/.astra-python/capabilities/`
+- `~/.astra-python/prompts/`
+- `~/.astra-python/skills/`
 
 ### 7.2 项目目录
 
-- `.pyi/capabilities/`
-- `.pyi/prompts/`
-- `.pyi/skills/`
-- `.pyi/context/`
+- `.astra/capabilities/`
+- `.astra/prompts/`
+- `.astra/skills/`
+- `.astra/context/`
 
 ### 7.3 推荐文件格式
 
@@ -625,9 +625,9 @@ context_files:
 
 目标：支持无需写 Python 代码的扩展。
 
-- 加载 `.pyi/prompts/*.md`
-- 加载 `.pyi/skills/*/skill.yaml`
-- 加载 `.pyi/context/*.md`
+- 加载 `.astra/prompts/*.md`
+- 加载 `.astra/skills/*/skill.yaml`
+- 加载 `.astra/context/*.md`
 - 将它们纳入 prompt 构建流程
 
 交付标准：
@@ -661,7 +661,7 @@ context_files:
 
 ## 17. 对现有文件的改造建议
 
-### `src/pyi/agent.py`
+### `src/astra/agent.py`
 
 改造重点：
 
@@ -669,21 +669,21 @@ context_files:
 - 去掉对单个 `system_prompt` 字符串的直接拼接假设
 - 仅保留运行循环、provider 调用、会话写入
 
-### `src/pyi/tools.py`
+### `src/astra/tools.py`
 
 改造重点：
 
 - 保留现有工具 handler 实现
 - 把“构建默认工具集合”的职责迁出到 `builtin_capabilities.py`
 
-### `src/pyi/cli.py`
+### `src/astra/cli.py`
 
 改造重点：
 
 - 把 slash command 分派改成 registry 驱动
 - `/help` 改为动态展示已注册命令
 
-### `src/pyi/config.py`
+### `src/astra/config.py`
 
 改造重点：
 
@@ -700,7 +700,7 @@ context_files:
 3. `CommandRegistry`
 4. `PromptRegistry`
 5. `/reload` 重建 runtime
-6. `.pyi/prompts/*.md` 文本加载
+6. `.astra/prompts/*.md` 文本加载
 
 先不要同时做：
 
@@ -751,7 +751,7 @@ context_files:
 - 已支持 `/skill:<name>` 与 `/template:<name>` 的最小激活动作，作用域为当前进程会话。
 - 已落地 `/runtime`、`/runtime warnings`、`/runtime json`。
 - 已落地 `/runtime prompt` 与 `/runtime json prompt`，用于检查最终 assembled system prompt 及其 fragment 顺序。
-- 已完成基础校验：`compileall`、`pyi --help`、runtime/prompt/skill 本地冒烟。
+- 已完成基础校验：`compileall`、`astra --help`、runtime/prompt/skill 本地冒烟。
 
 ### 建议优先落地（Phase 2）
 

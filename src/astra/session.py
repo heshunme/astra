@@ -68,7 +68,7 @@ def session_from_dict(data: dict) -> Session:
 
 class SessionStore:
     def __init__(self, base_dir: Path | None = None):
-        root = base_dir or Path.home() / ".pyi-python" / "sessions"
+        root = base_dir or Path.home() / ".astra-python" / "sessions"
         self.base_dir = root
         self.base_dir.mkdir(parents=True, exist_ok=True)
 

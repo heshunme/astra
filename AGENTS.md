@@ -19,15 +19,15 @@ These instructions apply to the entire `python/` directory tree.
 ## Commands
 - Syntax check / smoke validation:
   - `.venv\Scripts\python.exe -m compileall src`
-  - `.venv\Scripts\python.exe -m pyi --help`
+  - `.venv\Scripts\python.exe -m astra --help`
 - Package install/update:
   - `uv pip install -e .`
 - Do not run repo-level `npm` commands for work limited to `python/` unless explicitly asked.
 
 ## Configuration
 - Reloadable config files:
-  - Global: `~/.pyi-python/config.yaml`
-  - Project: `.pyi/config.yaml`
+  - Global: `~/.astra-python/config.yaml`
+  - Project: `.astra/config.yaml`
 - Precedence:
   - CLI args override YAML
   - Project YAML overrides global YAML
@@ -75,16 +75,16 @@ These instructions apply to the entire `python/` directory tree.
 
 ## SOP
 - Capability runtime change:
-  - Read `src/pyi/config.py`, `src/pyi/agent.py`, `src/pyi/cli.py`, and the target runtime/doc files in full.
+  - Read `src/astra/config.py`, `src/astra/agent.py`, `src/astra/cli.py`, and the target runtime/doc files in full.
   - Add or change config shape first.
   - Add runtime/registry behavior second.
   - Wire agent usage third.
   - Wire CLI commands last.
 - Validation sequence:
   - `.venv\Scripts\python.exe -m compileall src`
-  - `.venv\Scripts\python.exe -m pyi --help`
+  - `.venv\Scripts\python.exe -m astra --help`
   - Use a local `python -c` smoke check for config/runtime assembly when network access is not needed.
-  - For command-path changes, pipe commands into `pyi` with a fake `OPENAI_API_KEY` when the flow does not need a real provider call.
+  - For command-path changes, pipe commands into `astra` with a fake `OPENAI_API_KEY` when the flow does not need a real provider call.
   - For prompt-assembly changes, also smoke-check `/runtime prompt` and `/runtime json prompt`.
 - Common mistakes to avoid:
   - Forgetting to carry new runtime fields through clone/reload paths.

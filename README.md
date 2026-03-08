@@ -24,19 +24,19 @@ cd python
 uv venv .venv
 . .venv/Scripts/activate
 uv pip install -e .
-pyi --model gpt-4o-mini --base-url http://your-gateway/v1
+astra --model gpt-4o-mini --base-url http://your-gateway/v1
 ```
 
 ## Session storage
 
-Sessions are stored under `~/.pyi-python/sessions` by default.
+Sessions are stored under `~/.astra-python/sessions` by default.
 
 ## Reloadable config
 
 Reloadable config is read from:
 
-- Global: `~/.pyi-python/config.yaml`
-- Project: `.pyi/config.yaml`
+- Global: `~/.astra-python/config.yaml`
+- Project: `.astra/config.yaml`
 
 Project config overrides global config. Apply changes with `/reload`.
 
@@ -74,12 +74,12 @@ capabilities:
 
 Project prompt files:
 
-- `.pyi/prompts/*.md`
+- `.astra/prompts/*.md`
 
 Project skills:
 
-- `.pyi/skills/*/skill.yaml`
-- `.pyi/skills/*/*.md`
+- `.astra/skills/*/skill.yaml`
+- `.astra/skills/*/*.md`
 
 Minimal `skill.yaml` example:
 
@@ -117,7 +117,7 @@ Runtime prompt
 fragments=2
 char_length=123
 fragment[1]=builtin:base source=builtin chars=86
-fragment[2]=prompt:repo-rules source=E:\repo\.pyi\prompts\repo-rules.md chars=37
+fragment[2]=prompt:repo-rules source=E:\repo\.astra\prompts\repo-rules.md chars=37
 assembled:
 ...
 ```

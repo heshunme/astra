@@ -15,7 +15,7 @@ from .session import SessionStore
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(prog="pyi")
+    parser = argparse.ArgumentParser(prog="astra")
     parser.add_argument("--model")
     parser.add_argument("--base-url")
     parser.add_argument("--cwd", default=os.getcwd())
@@ -242,12 +242,12 @@ def main(argv: list[str] | None = None) -> None:
             print("Cannot reload while a response is streaming.")
             return
         try:
-            config_module = importlib.reload(importlib.import_module("pyi.config"))
-            importlib.reload(importlib.import_module("pyi.tools"))
-            importlib.reload(importlib.import_module("pyi.provider"))
-            importlib.reload(importlib.import_module("pyi.runtime.builtin_capabilities"))
-            runtime_module = importlib.reload(importlib.import_module("pyi.runtime.runtime"))
-            agent_module = importlib.reload(importlib.import_module("pyi.agent"))
+            config_module = importlib.reload(importlib.import_module("astra.config"))
+            importlib.reload(importlib.import_module("astra.tools"))
+            importlib.reload(importlib.import_module("astra.provider"))
+            importlib.reload(importlib.import_module("astra.runtime.builtin_capabilities"))
+            runtime_module = importlib.reload(importlib.import_module("astra.runtime.runtime"))
+            agent_module = importlib.reload(importlib.import_module("astra.agent"))
         except Exception as exc:
             print(f"Code reload failed: {exc}")
             return
@@ -494,7 +494,7 @@ def main(argv: list[str] | None = None) -> None:
     print_help()
     while True:
         try:
-            line = input("pyi> ").strip()
+            line = input("astra> ").strip()
             if not line:
                 continue
             if line.startswith("/") and command_registry.dispatch(line):

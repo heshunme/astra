@@ -138,10 +138,10 @@ def resolve_runtime_config(
 
 class ConfigManager:
     def __init__(self, global_config_path: Path | None = None):
-        self.global_config_path = global_config_path or Path.home() / ".pyi-python" / "config.yaml"
+        self.global_config_path = global_config_path or Path.home() / ".astra-python" / "config.yaml"
 
     def project_config_path(self, cwd: Path) -> Path:
-        return cwd / ".pyi" / "config.yaml"
+        return cwd / ".astra" / "config.yaml"
 
     def load(self, cwd: Path) -> RuntimeConfig:
         merged = self._deep_merge(self._read_yaml(self.global_config_path), self._read_yaml(self.project_config_path(cwd)))

@@ -125,8 +125,8 @@ Original `pi` includes:
 
 Python currently supports:
 
-- Global YAML config: `~/.pyi-python/config.yaml`
-- Project YAML config: `.pyi/config.yaml`
+- Global YAML config: `~/.astra-python/config.yaml`
+- Project YAML config: `.astra/config.yaml`
 - Runtime reload for:
   - `model`
   - `base_url`
@@ -313,8 +313,8 @@ Newly present or partially present:
 
 - Registry-driven command dispatch instead of a single hard-coded CLI command tree
 - Prompt assembly beyond a single direct `system_prompt` string
-- Local prompt loading from `.pyi/prompts/*.md`
-- Local skill loading from `.pyi/skills/*/skill.yaml`
+- Local prompt loading from `.astra/prompts/*.md`
+- Local skill loading from `.astra/skills/*/skill.yaml`
 - Process-session activation via `/skill:<name>` and `/template:<name>`
 - Runtime inspection via `/runtime` and `/runtime warnings`
 - Final prompt inspection via `/runtime prompt` and `/runtime json prompt`

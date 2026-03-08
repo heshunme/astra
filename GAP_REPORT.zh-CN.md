@@ -125,8 +125,8 @@ Python 尚缺少：
 
 Python 当前支持：
 
-- 全局 YAML 配置：`~/.pyi-python/config.yaml`
-- 项目 YAML 配置：`.pyi/config.yaml`
+- 全局 YAML 配置：`~/.astra-python/config.yaml`
+- 项目 YAML 配置：`.astra/config.yaml`
 - 可重载的运行时配置项：
   - `model`
   - `base_url`
@@ -313,8 +313,8 @@ Python 项目现在还新增了一层最小 capability runtime。
 
 - 用 registry 驱动的命令分派替代单一硬编码 CLI 命令树
 - 超出单个 `system_prompt` 字符串的 prompt 组装
-- 从 `.pyi/prompts/*.md` 加载本地 prompt
-- 从 `.pyi/skills/*/skill.yaml` 加载本地 skill
+- 从 `.astra/prompts/*.md` 加载本地 prompt
+- 从 `.astra/skills/*/skill.yaml` 加载本地 skill
 - 通过 `/skill:<name>` 和 `/template:<name>` 在当前进程会话中激活能力
 - 通过 `/runtime` 和 `/runtime warnings` 查看 runtime 状态
 - 通过 `/runtime prompt` 和 `/runtime json prompt` 检查最终 prompt 及其组装顺序

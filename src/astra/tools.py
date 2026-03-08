@@ -184,7 +184,7 @@ def bash_tool(args: dict, ctx: ToolContext) -> ToolResult:
     full_output_path = None
     truncated_output, truncated = truncate_tail(output or "", ctx.max_output_bytes)
     if truncated:
-        temp = tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, suffix=".log", prefix="pyi-bash-")
+        temp = tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, suffix=".log", prefix="astra-bash-")
         try:
             temp.write(output)
             full_output_path = temp.name

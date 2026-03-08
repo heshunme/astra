@@ -290,12 +290,12 @@ class CapabilityRuntime:
         return skill_dirs
 
     def _prompt_dirs(self, runtime_config: ResolvedRuntimeConfig) -> list[Path]:
-        prompt_dirs = [Path.home() / ".pyi-python" / "prompts", self.cwd / ".pyi" / "prompts"]
+        prompt_dirs = [Path.home() / ".astra-python" / "prompts", self.cwd / ".astra" / "prompts"]
         prompt_dirs.extend(self._resolve_extra_paths(runtime_config.capabilities.prompts.paths))
         return prompt_dirs
 
     def _skill_roots(self, runtime_config: ResolvedRuntimeConfig) -> list[Path]:
-        skill_dirs = [Path.home() / ".pyi-python" / "skills", self.cwd / ".pyi" / "skills"]
+        skill_dirs = [Path.home() / ".astra-python" / "skills", self.cwd / ".astra" / "skills"]
         skill_dirs.extend(self._resolve_extra_paths(runtime_config.capabilities.skills.paths))
         return skill_dirs
 
