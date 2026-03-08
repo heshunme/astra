@@ -1,6 +1,6 @@
 ﻿# Python Replica Gap Report
 
-This document records the current gap between the Python replica in `python/` and the original `pi` coding agent in `packages/coding-agent/`.
+This document records the current gap between the Python replica in this repository and the original `pi` coding agent in `packages/coding-agent/`.
 
 It is intended to be a living baseline for future convergence work.
 

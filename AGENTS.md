@@ -1,6 +1,6 @@
 ﻿# Python Replica Rules
 
-These instructions apply to the entire `python/` directory tree.
+These instructions apply to the entire repository tree.
 
 ## Purpose
 - This package is a Python replica of the core `pi-mono` coding-agent flow.
@@ -22,7 +22,7 @@ These instructions apply to the entire `python/` directory tree.
   - `.venv\Scripts\python.exe -m astra --help`
 - Package install/update:
   - `uv pip install -e .`
-- Do not run repo-level `npm` commands for work limited to `python/` unless explicitly asked.
+- Do not run repo-level `npm` commands for work limited to this package unless explicitly asked.
 
 ## Configuration
 - Reloadable config files:
@@ -98,5 +98,5 @@ These instructions apply to the entire `python/` directory tree.
 - Keep examples PowerShell-friendly unless cross-platform behavior is the point of the change.
 
 ## Git and scope hygiene
-- Only modify files under `python/` unless the user explicitly asks for broader changes.
+- Only modify files in this repository unless the user explicitly asks for broader changes.
 - Keep changes minimal and consistent with the existing Python package layout.

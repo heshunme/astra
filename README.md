@@ -1,6 +1,6 @@
 # Python core replica
 
-This directory contains a Python implementation of the core `pi-mono` coding-agent flow:
+This repository contains a Python implementation of the core `pi-mono` coding-agent flow:
 
 - OpenAI-compatible streaming chat
 - Tool calling loop
@@ -21,7 +21,6 @@ This directory contains a Python implementation of the core `pi-mono` coding-age
 ## Quick start
 
 ```bash
-cd python
 uv venv .venv
 . .venv/Scripts/activate
 uv pip install -e .

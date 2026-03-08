@@ -1,6 +1,6 @@
 # Python 副本差距报告
 
-本文档记录了 `python/` 中的 Python 副本与原始 `pi` 编码代理（位于 `packages/coding-agent/`）之间的当前差距。
+本文档记录了当前仓库中的 Python 副本与原始 `pi` 编码代理（位于 `packages/coding-agent/`）之间的当前差距。
 
 它的目标是作为后续逐步收敛工作的动态基线文档。
 
