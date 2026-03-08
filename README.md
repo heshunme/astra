@@ -152,3 +152,25 @@ This is the preferred way to check whether config, prompt files, skills, and in-
 Use `/runtime prompt` for a human-readable view of the fully assembled system prompt and the fragment order that produced it.
 
 Use `/runtime json prompt` for a machine-readable version of the same inspection data.
+
+## Testing
+
+Install test dependencies:
+
+```powershell
+uv pip install -e ".[test]"
+```
+
+Fast validation (recommended for PR checks):
+
+```powershell
+.venv\Scripts\python.exe -m compileall src
+.venv\Scripts\python.exe -m astra --help
+.venv\Scripts\python.exe -m pytest -q tests/unit tests/integration -m "not slow and not contract" --cov=astra --cov-fail-under=50
+```
+
+Extended validation (recommended for nightly runs):
+
+```powershell
+.venv\Scripts\python.exe -m pytest -q -m "contract or slow"
+```
