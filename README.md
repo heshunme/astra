@@ -9,7 +9,7 @@ This repository contains a Python implementation of the core `pi-mono` coding-ag
 - Session switching, renaming, and forking
 - Manual runtime reload via `/reload`
 - Project prompt and skill loading via the capability runtime
-- Single-run self-iteration safety loop via `/iterate once`
+- Self-iteration safety loop via `/iterate once` and bounded `/iterate auto`
 - Current gap tracking in `GAP_REPORT.md`
 
 Detailed self-iteration rollout plan: `docs/SELF_ITERATION_PLAN.md`.
@@ -113,6 +113,7 @@ Use runtime inspection commands to verify what the agent is currently using.
 - `/runtime json`
   - Machine-readable runtime state summary
   - Includes latest iteration status fields (`last_run_id`, decision, score, failure class)
+  - Includes latest loop fields (`last_loop_id`, `last_loop_step`, `last_loop_decision`, `last_loop_stop_reason`)
 - `/runtime prompt`
   - Human-readable assembled system prompt plus fragment order and sources
 - `/runtime json prompt`
@@ -156,6 +157,7 @@ Self-iteration run records are persisted at:
 - `/reload code`
 - `/save`
 - `/iterate once [objective]`
+- `/iterate auto [objective]`
 - `/iterate status`
 - `/exit`
 - `/skill:<name>`

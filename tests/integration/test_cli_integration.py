@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import builtins
 import io
+import json
 import sys
 from pathlib import Path
 
 import pytest
 
 from astra import cli
+from astra.iteration import IterationRunRecord
 from astra.session import SessionStore
 
 
@@ -58,6 +60,83 @@ def test_iterate_status_and_runtime_json_include_iteration(
     assert "No iteration runs" in out
     assert '"iteration"' in out
     assert '"last_run_id": null' in out
+
+
+def test_iterate_auto_command_uses_bounded_loop(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+
+    def fake_run_auto(self, *, session_id: str, iterate_fn, objective=None, **_kwargs):  # type: ignore[no-untyped-def]
+        return IterationRunRecord(
+            run_id="run-auto",
+            session_id=session_id,
+            checkpoint_id="ckpt-auto",
+            final_decision="accepted",
+            score=1.0,
+            objective=objective,
+            loop_id="loop-123",
+            loop_step=1,
+            loop_final_decision="accepted",
+            loop_stop_reason="accepted",
+        )
+
+    monkeypatch.setattr(cli.IterationExecutor, "run_auto", fake_run_auto)
+    monkeypatch.setattr(builtins, "input", InputFeeder(["/iterate auto tighten checks", "/runtime json", "/exit"]))
+    cli.main(["--cwd", str(cwd)])
+
+    out = capsys.readouterr().out
+    assert "Iteration status" in out
+    assert "loop_final_decision=accepted" in out
+    assert '"last_loop_id": "loop-123"' in out
+    assert '"last_loop_decision": "accepted"' in out
+
+
+def test_runtime_json_includes_loop_fields_from_persisted_record(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+    log_file = cwd / ".astra" / "logs" / "iteration_runs.jsonl"
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    log_file.write_text(
+        json.dumps(
+            {
+                "run_id": "run-1",
+                "session_id": "s-1",
+                "checkpoint_id": "ckpt-1",
+                "final_decision": "reverted",
+                "score": 0.33,
+                "changed_files": [],
+                "gate_results": [],
+                "failure_class": "test",
+                "duration_seconds": 0.2,
+                "objective": "ship fix",
+                "loop_id": "loop-9",
+                "loop_step": 3,
+                "loop_final_decision": "failed",
+                "loop_stop_reason": "max_steps",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(builtins, "input", InputFeeder(["/iterate status", "/runtime json", "/exit"]))
+    cli.main(["--cwd", str(cwd)])
+
+    out = capsys.readouterr().out
+    assert "loop_id=loop-9" in out
+    assert "loop_stop_reason=max_steps" in out
+    assert '"last_loop_id": "loop-9"' in out
+    assert '"last_loop_step": 3' in out
+    assert '"last_loop_stop_reason": "max_steps"' in out
 
 
 def test_model_and_base_url_commands(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -124,3 +124,80 @@ def test_iteration_ignores_astra_log_artifacts(tmp_path: Path, monkeypatch: pyte
     record = executor.run_once(session_id="s-4", iterate_fn=lambda: None)
 
     assert record.final_decision == "accepted"
+
+
+def test_iteration_auto_accepts_after_retry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    workspace = tmp_path / "workspace"
+    _init_repo(workspace)
+    _ensure_local_python(workspace)
+    executor = IterationExecutor(workspace)
+
+    monkeypatch.setattr(
+        executor,
+        "_default_gates",
+        lambda _python: [GateSpec(name="compileall", command=[sys.executable, "-c", "print('ok')"])],
+    )
+
+    seen_steps: list[int] = []
+
+    def attempt(step: int) -> str | None:
+        seen_steps.append(step)
+        if step == 1:
+            return "step 1 failed"
+        return None
+
+    record = executor.run_auto(session_id="s-5", iterate_fn=attempt, objective="stabilize loop")
+
+    assert seen_steps == [1, 2]
+    assert record.final_decision == "accepted"
+    assert record.loop_final_decision == "accepted"
+    assert record.loop_stop_reason == "accepted"
+    assert record.loop_step == 2
+    assert record.loop_id is not None
+    assert record.objective == "stabilize loop"
+
+
+def test_iteration_auto_stops_on_max_reverts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    workspace = tmp_path / "workspace"
+    _init_repo(workspace)
+    _ensure_local_python(workspace)
+    executor = IterationExecutor(workspace)
+
+    monkeypatch.setattr(
+        executor,
+        "_default_gates",
+        lambda _python: [GateSpec(name="compileall", command=[sys.executable, "-c", "print('ok')"])],
+    )
+
+    def attempt(_step: int) -> str | None:
+        return "always fail"
+
+    record = executor.run_auto(session_id="s-6", iterate_fn=attempt, max_steps=5, max_reverts=2)
+
+    assert record.final_decision == "reverted"
+    assert record.loop_final_decision == "failed"
+    assert record.loop_stop_reason == "max_reverts"
+    assert record.loop_step == 2
+
+
+def test_iteration_auto_fails_fast_on_env_error(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    _init_repo(workspace)
+    # Intentionally skip local python setup to trigger env failure.
+    executor = IterationExecutor(workspace)
+
+    called = False
+
+    def attempt(_step: int) -> str | None:
+        nonlocal called
+        called = True
+        return None
+
+    record = executor.run_auto(session_id="s-7", iterate_fn=attempt)
+
+    assert called is False
+    assert record.final_decision == "failed"
+    assert record.failure_class == "env"
+    assert record.loop_final_decision == "failed"
+    assert record.loop_stop_reason == "env_failure"
+    assert record.loop_step == 1

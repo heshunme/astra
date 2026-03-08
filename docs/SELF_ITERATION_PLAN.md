@@ -73,3 +73,30 @@ Phase 1 is complete when:
 2. Failed gate runs revert workspace changes automatically.
 3. `/iterate status` reports the latest run from memory or persisted log.
 4. `/runtime json` includes latest iteration summary fields.
+
+## Phase 2 (Implemented)
+
+Phase 2 extends the single-run loop with a bounded multi-step orchestrator while keeping Phase 1 safety guarantees.
+
+Included:
+
+- `/iterate auto [objective]`
+- Budgeted loop controller:
+  - `max_steps=3`
+  - `max_reverts=2`
+  - `max_total_seconds=900`
+- Loop termination rules:
+  - stop on first accepted step
+  - stop on `env` failure (fail-fast)
+  - stop when any budget limit is reached
+- Extended run ledger fields:
+  - `objective`
+  - `loop_id`
+  - `loop_step`
+  - `loop_final_decision`
+  - `loop_stop_reason`
+- Runtime inspection summary for latest loop fields via `/runtime json`
+
+Notes:
+
+- Checkpointing remains workspace file snapshot based; no git-commit/branch checkpointing is introduced in Phase 2.

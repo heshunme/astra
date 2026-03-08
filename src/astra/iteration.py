@@ -11,6 +11,8 @@ from typing import Callable, Literal
 
 FailureClass = Literal["syntax", "test", "cli", "env", "timeout", "unknown"]
 Decision = Literal["accepted", "reverted", "failed"]
+LoopDecision = Literal["accepted", "failed"]
+LoopStopReason = Literal["accepted", "max_steps", "max_reverts", "max_total_seconds", "env_failure"]
 
 
 @dataclass(slots=True)
@@ -42,6 +44,11 @@ class IterationRunRecord:
     failure_class: FailureClass | None = None
     error: str | None = None
     duration_seconds: float = 0.0
+    objective: str | None = None
+    loop_id: str | None = None
+    loop_step: int | None = None
+    loop_final_decision: LoopDecision | None = None
+    loop_stop_reason: LoopStopReason | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -65,6 +72,11 @@ class IterationRunRecord:
             "failure_class": self.failure_class,
             "error": self.error,
             "duration_seconds": self.duration_seconds,
+            "objective": self.objective,
+            "loop_id": self.loop_id,
+            "loop_step": self.loop_step,
+            "loop_final_decision": self.loop_final_decision,
+            "loop_stop_reason": self.loop_stop_reason,
         }
 
     @classmethod
@@ -94,6 +106,13 @@ class IterationRunRecord:
             failure_class=raw.get("failure_class") if isinstance(raw.get("failure_class"), str) else None,
             error=raw.get("error") if isinstance(raw.get("error"), str) else None,
             duration_seconds=float(raw.get("duration_seconds", 0.0)),
+            objective=raw.get("objective") if isinstance(raw.get("objective"), str) else None,
+            loop_id=raw.get("loop_id") if isinstance(raw.get("loop_id"), str) else None,
+            loop_step=raw.get("loop_step") if isinstance(raw.get("loop_step"), int) else None,
+            loop_final_decision=(
+                raw.get("loop_final_decision") if isinstance(raw.get("loop_final_decision"), str) else None
+            ),
+            loop_stop_reason=raw.get("loop_stop_reason") if isinstance(raw.get("loop_stop_reason"), str) else None,
         )
 
 
@@ -104,6 +123,10 @@ class WorkspaceCheckpoint:
 
 
 class IterationExecutor:
+    AUTO_MAX_STEPS = 3
+    AUTO_MAX_REVERTS = 2
+    AUTO_MAX_TOTAL_SECONDS = 900
+
     def __init__(self, cwd: Path, *, log_path: Path | None = None):
         self.cwd = cwd
         self.log_path = log_path or (cwd / ".astra" / "logs" / "iteration_runs.jsonl")
@@ -113,6 +136,12 @@ class IterationExecutor:
         *,
         session_id: str,
         iterate_fn: Callable[[], str | None],
+        objective: str | None = None,
+        loop_id: str | None = None,
+        loop_step: int | None = None,
+        loop_final_decision: LoopDecision | None = None,
+        loop_stop_reason: LoopStopReason | None = None,
+        append_record: bool = True,
     ) -> IterationRunRecord:
         run_id = uuid.uuid4().hex
         checkpoint_id = f"ckpt-{run_id[:8]}"
@@ -133,8 +162,14 @@ class IterationExecutor:
                 score=0.0,
                 failure_class="env",
                 error="Iteration requires a git workspace.",
+                objective=objective,
+                loop_id=loop_id,
+                loop_step=loop_step,
+                loop_final_decision=loop_final_decision,
+                loop_stop_reason=loop_stop_reason,
             )
-            self._append_record(record)
+            if append_record:
+                self._append_record(record)
             return record
 
         python_path = self._resolve_python_executable()
@@ -147,8 +182,14 @@ class IterationExecutor:
                 score=0.0,
                 failure_class="env",
                 error="Iteration requires .venv python (.venv/Scripts/python.exe or .venv/bin/python).",
+                objective=objective,
+                loop_id=loop_id,
+                loop_step=loop_step,
+                loop_final_decision=loop_final_decision,
+                loop_stop_reason=loop_stop_reason,
             )
-            self._append_record(record)
+            if append_record:
+                self._append_record(record)
             return record
 
         dirty_files = self._dirty_files()
@@ -161,8 +202,14 @@ class IterationExecutor:
                 score=0.0,
                 failure_class="env",
                 error=f"Working tree is dirty ({', '.join(dirty_files[:5])}). Commit or stash changes before /iterate once.",
+                objective=objective,
+                loop_id=loop_id,
+                loop_step=loop_step,
+                loop_final_decision=loop_final_decision,
+                loop_stop_reason=loop_stop_reason,
             )
-            self._append_record(record)
+            if append_record:
+                self._append_record(record)
             return record
 
         checkpoint = self._create_checkpoint(checkpoint_id)
@@ -204,9 +251,111 @@ class IterationExecutor:
             failure_class=failure_class,
             error=error,
             duration_seconds=duration_seconds,
+            objective=objective,
+            loop_id=loop_id,
+            loop_step=loop_step,
+            loop_final_decision=loop_final_decision,
+            loop_stop_reason=loop_stop_reason,
         )
-        self._append_record(record)
+        if append_record:
+            self._append_record(record)
         return record
+
+    def run_auto(
+        self,
+        *,
+        session_id: str,
+        iterate_fn: Callable[[int], str | None],
+        objective: str | None = None,
+        max_steps: int = AUTO_MAX_STEPS,
+        max_reverts: int = AUTO_MAX_REVERTS,
+        max_total_seconds: int = AUTO_MAX_TOTAL_SECONDS,
+    ) -> IterationRunRecord:
+        loop_id = f"loop-{uuid.uuid4().hex[:12]}"
+        start = time.monotonic()
+        max_steps = max(1, max_steps)
+        max_reverts = max(1, max_reverts)
+        max_total_seconds = max(1, max_total_seconds)
+        revert_count = 0
+
+        for step in range(1, max_steps + 1):
+            if time.monotonic() - start >= max_total_seconds:
+                timeout_record = IterationRunRecord(
+                    run_id=uuid.uuid4().hex,
+                    session_id=session_id,
+                    checkpoint_id=f"ckpt-{uuid.uuid4().hex[:8]}",
+                    final_decision="failed",
+                    score=0.0,
+                    failure_class="timeout",
+                    error="Iteration loop time budget exceeded before executing this step.",
+                    objective=objective,
+                    loop_id=loop_id,
+                    loop_step=step,
+                    loop_final_decision="failed",
+                    loop_stop_reason="max_total_seconds",
+                )
+                self._append_record(timeout_record)
+                return timeout_record
+
+            record = self.run_once(
+                session_id=session_id,
+                iterate_fn=lambda current_step=step: iterate_fn(current_step),
+                objective=objective,
+                loop_id=loop_id,
+                loop_step=step,
+                append_record=False,
+            )
+
+            if record.failure_class == "env":
+                record.loop_final_decision = "failed"
+                record.loop_stop_reason = "env_failure"
+                self._append_record(record)
+                return record
+
+            if record.final_decision == "accepted":
+                record.loop_final_decision = "accepted"
+                record.loop_stop_reason = "accepted"
+                self._append_record(record)
+                return record
+
+            if record.final_decision == "reverted":
+                revert_count += 1
+
+            elapsed = time.monotonic() - start
+            if revert_count >= max_reverts:
+                record.loop_final_decision = "failed"
+                record.loop_stop_reason = "max_reverts"
+                self._append_record(record)
+                return record
+            if elapsed >= max_total_seconds:
+                record.loop_final_decision = "failed"
+                record.loop_stop_reason = "max_total_seconds"
+                self._append_record(record)
+                return record
+            if step >= max_steps:
+                record.loop_final_decision = "failed"
+                record.loop_stop_reason = "max_steps"
+                self._append_record(record)
+                return record
+
+            self._append_record(record)
+
+        fallback = IterationRunRecord(
+            run_id=uuid.uuid4().hex,
+            session_id=session_id,
+            checkpoint_id=f"ckpt-{uuid.uuid4().hex[:8]}",
+            final_decision="failed",
+            score=0.0,
+            failure_class="unknown",
+            error="Iteration loop exited unexpectedly.",
+            objective=objective,
+            loop_id=loop_id,
+            loop_step=max_steps,
+            loop_final_decision="failed",
+            loop_stop_reason="max_steps",
+        )
+        self._append_record(fallback)
+        return fallback
 
     def last_record(self) -> IterationRunRecord | None:
         if not self.log_path.exists():

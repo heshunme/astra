@@ -126,6 +126,10 @@ def build_runtime_summary(agent: Agent, iteration_record: IterationRunRecord | N
             "last_decision": iteration_record.final_decision if iteration_record else None,
             "last_score": iteration_record.score if iteration_record else None,
             "last_failure_class": iteration_record.failure_class if iteration_record else None,
+            "last_loop_id": iteration_record.loop_id if iteration_record else None,
+            "last_loop_step": iteration_record.loop_step if iteration_record else None,
+            "last_loop_decision": iteration_record.loop_final_decision if iteration_record else None,
+            "last_loop_stop_reason": iteration_record.loop_stop_reason if iteration_record else None,
         },
         "warnings": warnings,
     }
@@ -183,6 +187,13 @@ def print_runtime_summary(
     print(f"iteration.last_decision={iteration_summary['last_decision'] or '(none)'}")
     print(f"iteration.last_score={iteration_summary['last_score'] if iteration_summary['last_score'] is not None else '(none)'}")
     print(f"iteration.last_failure_class={iteration_summary['last_failure_class'] or '(none)'}")
+    print(f"iteration.last_loop_id={iteration_summary['last_loop_id'] or '(none)'}")
+    print(
+        "iteration.last_loop_step="
+        f"{iteration_summary['last_loop_step'] if iteration_summary['last_loop_step'] is not None else '(none)'}"
+    )
+    print(f"iteration.last_loop_decision={iteration_summary['last_loop_decision'] or '(none)'}")
+    print(f"iteration.last_loop_stop_reason={iteration_summary['last_loop_stop_reason'] or '(none)'}")
     print(f"warnings.count={len(warnings)}")
 
 
@@ -218,7 +229,12 @@ def print_iteration_status(record: IterationRunRecord | None) -> None:
     print(f"decision={record.final_decision}")
     print(f"score={record.score:.3f}")
     print(f"failure_class={record.failure_class or '(none)'}")
+    print(f"objective={record.objective or '(none)'}")
     print(f"changed_files={', '.join(record.changed_files) or '(none)'}")
+    print(f"loop_id={record.loop_id or '(none)'}")
+    print(f"loop_step={record.loop_step if record.loop_step is not None else '(none)'}")
+    print(f"loop_final_decision={record.loop_final_decision or '(none)'}")
+    print(f"loop_stop_reason={record.loop_stop_reason or '(none)'}")
     if record.error:
         print(f"error={record.error}")
     if not record.gate_results:
@@ -486,20 +502,45 @@ def main(
             if normalized_remainder == "status":
                 print_iteration_status(last_iteration_record)
                 return True
-            if not normalized_remainder.startswith("once"):
-                return False
             if agent.is_streaming:
                 print("Cannot iterate while a response is streaming.")
                 return True
+            if normalized_remainder.startswith("once"):
+                objective = normalized_remainder[4:].strip()
+
+                def run_single_iteration_prompt() -> str | None:
+                    prompt = (
+                        objective
+                        if objective
+                        else (
+                            "Perform one safe self-iteration on this repository: make one small useful code change, "
+                            "run relevant checks, and keep the patch minimal."
+                        )
+                    )
+                    result = agent.prompt(prompt, on_event=stream_callback)
+                    print()
+                    if result.error:
+                        return result.error
+                    return None
+
+                last_iteration_record = iteration_executor.run_once(
+                    session_id=agent.session.id,
+                    iterate_fn=run_single_iteration_prompt,
+                    objective=objective or None,
+                )
+                print_iteration_status(last_iteration_record)
+                return True
+            if not normalized_remainder.startswith("auto"):
+                return False
             objective = normalized_remainder[4:].strip()
 
-            def run_single_iteration_prompt() -> str | None:
+            def run_auto_iteration_prompt(step: int) -> str | None:
                 prompt = (
                     objective
                     if objective
                     else (
                         "Perform one safe self-iteration on this repository: make one small useful code change, "
-                        "run relevant checks, and keep the patch minimal."
+                        f"run relevant checks, and keep the patch minimal. This is auto-iteration step {step}."
                     )
                 )
                 result = agent.prompt(prompt, on_event=stream_callback)
@@ -508,9 +549,10 @@ def main(
                     return result.error
                 return None
 
-            last_iteration_record = iteration_executor.run_once(
+            last_iteration_record = iteration_executor.run_auto(
                 session_id=agent.session.id,
-                iterate_fn=run_single_iteration_prompt,
+                iterate_fn=run_auto_iteration_prompt,
+                objective=objective or None,
             )
             print_iteration_status(last_iteration_record)
             return True
@@ -604,8 +646,8 @@ def main(
         command_registry.register(
             CommandSpec(
                 name="/iterate",
-                usage="/iterate once [objective] | /iterate status",
-                summary="Run one self-iteration or inspect last iteration result",
+                usage="/iterate once [objective] | /iterate auto [objective] | /iterate status",
+                summary="Run bounded self-iteration or inspect last iteration result",
                 handler=iterate_command,
             )
         )
