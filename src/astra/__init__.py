@@ -9,6 +9,7 @@ from .config import (
     RuntimeConfig,
     ToolRuntimeConfig,
 )
+from .iteration import GateResult, GateSpec, IterationExecutor, IterationRunRecord
 from .provider import OpenAICompatibleProvider
 from .runtime import CapabilityRuntime, CommandRegistry, CommandSpec, PrefixCommandSpec
 from .session import SessionStore
@@ -22,6 +23,10 @@ __all__ = [
     "CommandSpec",
     "ConfigError",
     "ConfigManager",
+    "GateResult",
+    "GateSpec",
+    "IterationExecutor",
+    "IterationRunRecord",
     "OpenAICompatibleProvider",
     "PrefixCommandSpec",
     "PromptRuntimeConfig",

@@ -9,7 +9,10 @@ This repository contains a Python implementation of the core `pi-mono` coding-ag
 - Session switching, renaming, and forking
 - Manual runtime reload via `/reload`
 - Project prompt and skill loading via the capability runtime
+- Single-run self-iteration safety loop via `/iterate once`
 - Current gap tracking in `GAP_REPORT.md`
+
+Detailed self-iteration rollout plan: `docs/SELF_ITERATION_PLAN.md`.
 
 ## Requirements
 
@@ -109,6 +112,7 @@ Use runtime inspection commands to verify what the agent is currently using.
   - Only runtime warnings
 - `/runtime json`
   - Machine-readable runtime state summary
+  - Includes latest iteration status fields (`last_run_id`, decision, score, failure class)
 - `/runtime prompt`
   - Human-readable assembled system prompt plus fragment order and sources
 - `/runtime json prompt`
@@ -129,6 +133,10 @@ assembled:
 
 This is the preferred way to check whether config, prompt files, skills, and in-session `/skill:` or `/template:` activations actually changed the final prompt sent to the provider.
 
+Self-iteration run records are persisted at:
+
+- `.astra/logs/iteration_runs.jsonl`
+
 ## Supported commands
 
 - `/help`
@@ -147,6 +155,8 @@ This is the preferred way to check whether config, prompt files, skills, and in-
 - `/reload`
 - `/reload code`
 - `/save`
+- `/iterate once [objective]`
+- `/iterate status`
 - `/exit`
 - `/skill:<name>`
 - `/template:<name>`

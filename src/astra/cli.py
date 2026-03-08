@@ -20,6 +20,7 @@ from .config import (
     merged_env,
     resolve_runtime_config,
 )
+from .iteration import IterationExecutor, IterationRunRecord
 from .runtime import CapabilityRuntime, CommandRegistry, CommandSpec, PrefixCommandSpec
 from .session import SessionStore
 
@@ -94,7 +95,7 @@ def print_tools_summary(agent: Agent) -> None:
     print(f"bash.max_output_bytes={agent.runtime_config.tools.bash_max_output_bytes}")
 
 
-def build_runtime_summary(agent: Agent) -> dict[str, object]:
+def build_runtime_summary(agent: Agent, iteration_record: IterationRunRecord | None = None) -> dict[str, object]:
     snapshot = agent.runtime.snapshot()
     warnings = agent.runtime.warnings()
     return {
@@ -120,6 +121,12 @@ def build_runtime_summary(agent: Agent) -> dict[str, object]:
             "bash_timeout_seconds": agent.runtime_config.tools.bash_timeout_seconds,
             "bash_max_output_bytes": agent.runtime_config.tools.bash_max_output_bytes,
         },
+        "iteration": {
+            "last_run_id": iteration_record.run_id if iteration_record else None,
+            "last_decision": iteration_record.final_decision if iteration_record else None,
+            "last_score": iteration_record.score if iteration_record else None,
+            "last_failure_class": iteration_record.failure_class if iteration_record else None,
+        },
         "warnings": warnings,
     }
 
@@ -141,12 +148,17 @@ def build_runtime_prompt_summary(agent: Agent) -> dict[str, object]:
     }
 
 
-def print_runtime_summary(agent: Agent, show_warnings_only: bool = False) -> None:
-    summary = build_runtime_summary(agent)
+def print_runtime_summary(
+    agent: Agent,
+    show_warnings_only: bool = False,
+    iteration_record: IterationRunRecord | None = None,
+) -> None:
+    summary = build_runtime_summary(agent, iteration_record)
     warnings = summary["warnings"]
     prompt_summary = summary["prompts"]
     skill_summary = summary["skills"]
     template_summary = summary["templates"]
+    iteration_summary = summary["iteration"]
     if not isinstance(warnings, list):
         warnings = []
     if show_warnings_only:
@@ -167,6 +179,10 @@ def print_runtime_summary(agent: Agent, show_warnings_only: bool = False) -> Non
     print(f"templates.active={', '.join(template_summary['active']) or '(none)'}")
     print(f"prompts.loaded={', '.join(prompt_summary['loaded']) or '(none)'}")
     print(f"skills.loaded={', '.join(skill_summary['loaded']) or '(none)'}")
+    print(f"iteration.last_run_id={iteration_summary['last_run_id'] or '(none)'}")
+    print(f"iteration.last_decision={iteration_summary['last_decision'] or '(none)'}")
+    print(f"iteration.last_score={iteration_summary['last_score'] if iteration_summary['last_score'] is not None else '(none)'}")
+    print(f"iteration.last_failure_class={iteration_summary['last_failure_class'] or '(none)'}")
     print(f"warnings.count={len(warnings)}")
 
 
@@ -189,6 +205,27 @@ def print_runtime_prompt(agent: Agent) -> None:
         print(assembled)
     else:
         print("(empty)")
+
+
+def print_iteration_status(record: IterationRunRecord | None) -> None:
+    if record is None:
+        print("No iteration runs")
+        return
+    print("Iteration status")
+    print(f"run_id={record.run_id}")
+    print(f"session_id={record.session_id}")
+    print(f"checkpoint_id={record.checkpoint_id}")
+    print(f"decision={record.final_decision}")
+    print(f"score={record.score:.3f}")
+    print(f"failure_class={record.failure_class or '(none)'}")
+    print(f"changed_files={', '.join(record.changed_files) or '(none)'}")
+    if record.error:
+        print(f"error={record.error}")
+    if not record.gate_results:
+        print("gates=(none)")
+        return
+    for gate in record.gate_results:
+        print(f"gate.{gate.name}=status:{gate.status} exit:{gate.exit_code} duration:{gate.duration_seconds:.2f}s")
 
 
 def read_cli_line(prompt: str = "astra> ") -> str:
@@ -276,6 +313,8 @@ def main(
             print(f"Warning: {warning}", file=sys.stderr)
 
     command_registry = CommandRegistry()
+    iteration_executor = IterationExecutor(cwd)
+    last_iteration_record = iteration_executor.last_record()
 
     def print_help() -> None:
         for line in command_registry.help_lines():
@@ -366,6 +405,8 @@ def main(
             print(f"Reload failed after code reload: {result.message}")
 
     def register_commands() -> None:
+        nonlocal last_iteration_record
+
         def help_command(_line: str) -> bool:
             print_help()
             return True
@@ -420,22 +461,58 @@ def main(
             _command_name, _, remainder = line.partition(" ")
             normalized_remainder = remainder.strip()
             if normalized_remainder == "json":
-                print(json.dumps(build_runtime_summary(agent), ensure_ascii=False, indent=2))
+                print(json.dumps(build_runtime_summary(agent, last_iteration_record), ensure_ascii=False, indent=2))
                 return True
             if normalized_remainder == "json prompt":
-                payload = build_runtime_summary(agent)
+                payload = build_runtime_summary(agent, last_iteration_record)
                 payload["prompt"] = build_runtime_prompt_summary(agent)
                 print(json.dumps(payload, ensure_ascii=False, indent=2))
                 return True
             if normalized_remainder == "warnings":
-                print_runtime_summary(agent, show_warnings_only=True)
+                print_runtime_summary(agent, show_warnings_only=True, iteration_record=last_iteration_record)
                 return True
             if normalized_remainder == "prompt":
                 print_runtime_prompt(agent)
                 return True
             if normalized_remainder:
                 return False
-            print_runtime_summary(agent)
+            print_runtime_summary(agent, iteration_record=last_iteration_record)
+            return True
+
+        def iterate_command(line: str) -> bool:
+            nonlocal last_iteration_record
+            _command_name, _, remainder = line.partition(" ")
+            normalized_remainder = remainder.strip()
+            if normalized_remainder == "status":
+                print_iteration_status(last_iteration_record)
+                return True
+            if not normalized_remainder.startswith("once"):
+                return False
+            if agent.is_streaming:
+                print("Cannot iterate while a response is streaming.")
+                return True
+            objective = normalized_remainder[4:].strip()
+
+            def run_single_iteration_prompt() -> str | None:
+                prompt = (
+                    objective
+                    if objective
+                    else (
+                        "Perform one safe self-iteration on this repository: make one small useful code change, "
+                        "run relevant checks, and keep the patch minimal."
+                    )
+                )
+                result = agent.prompt(prompt, on_event=stream_callback)
+                print()
+                if result.error:
+                    return result.error
+                return None
+
+            last_iteration_record = iteration_executor.run_once(
+                session_id=agent.session.id,
+                iterate_fn=run_single_iteration_prompt,
+            )
+            print_iteration_status(last_iteration_record)
             return True
 
         def sessions_command(_line: str) -> bool:
@@ -524,6 +601,14 @@ def main(
             CommandSpec(name="/rename", usage="/rename <name>", summary="Rename the current session", handler=rename_command)
         )
         command_registry.register(CommandSpec(name="/save", usage="/save", summary="Save the current session", handler=save_command))
+        command_registry.register(
+            CommandSpec(
+                name="/iterate",
+                usage="/iterate once [objective] | /iterate status",
+                summary="Run one self-iteration or inspect last iteration result",
+                handler=iterate_command,
+            )
+        )
         command_registry.register(CommandSpec(name="/exit", usage="/exit", summary="Exit the CLI", handler=exit_command))
         command_registry.register_prefix(
             PrefixCommandSpec(

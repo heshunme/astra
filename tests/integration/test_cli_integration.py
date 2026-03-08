@@ -43,6 +43,23 @@ def test_runtime_json_prompt_command(capsys: pytest.CaptureFixture[str], monkeyp
     assert '"fragment_count"' in out
 
 
+def test_iterate_status_and_runtime_json_include_iteration(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+
+    monkeypatch.setattr(builtins, "input", InputFeeder(["/iterate status", "/runtime json", "/exit"]))
+    cli.main(["--cwd", str(cwd)])
+
+    out = capsys.readouterr().out
+    assert "No iteration runs" in out
+    assert '"iteration"' in out
+    assert '"last_run_id": null' in out
+
+
 def test_model_and_base_url_commands(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     cwd = tmp_path / "workspace"
     cwd.mkdir()

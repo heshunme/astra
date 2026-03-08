@@ -4,7 +4,7 @@ These instructions apply to the entire repository tree.
 
 ## Purpose
 - This package is a Python replica of the core `pi-mono` coding-agent flow.
-- Keep the scope focused on: CLI, session persistence, tool calling, runtime reload, and OpenAI-compatible provider support.
+- Keep the scope focused on: CLI, session persistence, tool calling, runtime reload, self-iteration safety loop, and OpenAI-compatible provider support.
 - Do not add TUI, RPC, extension ecosystems, or unrelated monorepo concepts unless explicitly requested.
 
 ## Environment
@@ -48,6 +48,9 @@ These instructions apply to the entire repository tree.
 - `--base-url`, YAML `base_url`, and `/base-url` must stay aligned.
 - Preserve session history across runtime reloads.
 - Do not reload while a response is streaming.
+- `/iterate once` is a single-run flow: preflight -> checkpoint -> attempt -> validate -> accept/revert -> record.
+- `/iterate once` must fail fast on dirty worktree or missing local `.venv` python.
+- Gate failures or runtime errors during `/iterate once` must auto-revert workspace changes.
 
 ## Implementation rules
 - Prefer standard library modules unless a dependency is clearly justified.
@@ -61,6 +64,7 @@ These instructions apply to the entire repository tree.
 - Prefer small smoke tests over heavyweight test scaffolding unless tests are explicitly requested.
 - If you add config behavior, validate both merge precedence and runtime reload.
 - If you add CLI behavior, validate the actual command path, not just library calls.
+- If you change self-iteration behavior, validate `/iterate status` and `/runtime json` iteration fields, and run targeted `tests/unit/test_iteration.py`.
 
 ## Working Notes
 - Read every target file in full before editing; when several files are coupled, read them as one batch first.
@@ -95,6 +99,7 @@ These instructions apply to the entire repository tree.
 
 ## Documentation
 - Update `README.md` when changing CLI flags, slash commands, config keys, or runtime reload behavior.
+- Update `docs/SELF_ITERATION_PLAN.md` when changing checkpoint/gate/rollback/ledger semantics.
 - Keep examples PowerShell-friendly unless cross-platform behavior is the point of the change.
 
 ## Git and scope hygiene
