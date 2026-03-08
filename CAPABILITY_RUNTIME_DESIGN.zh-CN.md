@@ -1,4 +1,4 @@
-﻿# Python Capability Runtime 设计文档
+# Python Capability Runtime 设计文档
 
 本文档定义当前仓库中 Python agent 的“能力扩展运行时”设计。
 

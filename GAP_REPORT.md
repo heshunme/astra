@@ -1,4 +1,4 @@
-﻿# Python Replica Gap Report
+# Python Replica Gap Report
 
 This document records the current gap between the Python replica in this repository and the original `pi` coding agent in `packages/coding-agent/`.
 

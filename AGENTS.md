@@ -1,4 +1,4 @@
-﻿# Python Replica Rules
+# Python Replica Rules
 
 These instructions apply to the entire repository tree.
 
