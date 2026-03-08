@@ -100,6 +100,9 @@ Only prompt and skill resources referenced by config or activated in-session are
 
 Use runtime inspection commands to verify what the agent is currently using.
 
+- `/tools`
+  - Enabled tools and tool default limits (`read.max_lines`, bash timeout, bash output cap)
+
 - `/runtime`
   - Human-readable runtime summary
 - `/runtime warnings`

@@ -86,6 +86,14 @@ def print_reload_summary(agent: Agent, message: str, warnings: list[str] | None 
         print(f"warning={warning}")
 
 
+def print_tools_summary(agent: Agent) -> None:
+    print("Tools summary")
+    print(f"tools={', '.join(agent.tools) or '(none)'}")
+    print(f"read.max_lines={agent.runtime_config.tools.read_max_lines}")
+    print(f"bash.timeout_seconds={agent.runtime_config.tools.bash_timeout_seconds}")
+    print(f"bash.max_output_bytes={agent.runtime_config.tools.bash_max_output_bytes}")
+
+
 def build_runtime_summary(agent: Agent) -> dict[str, object]:
     snapshot = agent.runtime.snapshot()
     warnings = agent.runtime.warnings()
@@ -405,7 +413,7 @@ def main(
             return True
 
         def tools_command(_line: str) -> bool:
-            print_reload_summary(agent, "Current runtime")
+            print_tools_summary(agent)
             return True
 
         def runtime_command(line: str) -> bool:
@@ -499,7 +507,9 @@ def main(
         command_registry.register(
             CommandSpec(name="/base-url", usage="/base-url [url]", summary="Show or set base URL", handler=base_url_command)
         )
-        command_registry.register(CommandSpec(name="/tools", usage="/tools", summary="Show runtime summary", handler=tools_command))
+        command_registry.register(
+            CommandSpec(name="/tools", usage="/tools", summary="Show enabled tools and defaults", handler=tools_command)
+        )
         command_registry.register(
             CommandSpec(name="/runtime", usage="/runtime | /runtime warnings | /runtime json | /runtime prompt | /runtime json prompt", summary="Show capability runtime state", handler=runtime_command)
         )

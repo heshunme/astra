@@ -57,8 +57,13 @@ def test_model_and_base_url_commands(capsys: pytest.CaptureFixture[str], monkeyp
     out = capsys.readouterr().out
     assert "Model set to custom-model" in out
     assert "Base URL set to http://gateway/v1" in out
-    assert "model=custom-model" in out
-    assert "base_url=http://gateway/v1" in out
+    assert "Tools summary" in out
+    assert "tools=read, write, edit, ls, find, grep, bash" in out
+    assert "read.max_lines=400" in out
+    assert "bash.timeout_seconds=60" in out
+    assert "bash.max_output_bytes=32768" in out
+    assert "model=custom-model" not in out
+    assert "base_url=http://gateway/v1" not in out
 
 
 def test_switch_command(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
