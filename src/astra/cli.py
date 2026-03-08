@@ -7,11 +7,18 @@ import os
 import signal
 import sys
 from pathlib import Path
+from typing import Callable
 
 from .agent import Agent, AgentConfig
 from .config import ConfigError, ConfigManager, ResolvedRuntimeConfig, RuntimeConfig, clone_resolved_runtime_config, resolve_runtime_config
 from .runtime import CapabilityRuntime, CommandRegistry, CommandSpec, PrefixCommandSpec
 from .session import SessionStore
+
+
+AgentFactory = Callable[[AgentConfig, CapabilityRuntime, SessionStore], Agent]
+RuntimeFactory = Callable[[Path], CapabilityRuntime]
+SessionStoreFactory = Callable[[], SessionStore]
+ConfigManagerFactory = Callable[[], ConfigManager]
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -167,14 +174,25 @@ def print_runtime_prompt(agent: Agent) -> None:
         print("(empty)")
 
 
-def main(argv: list[str] | None = None) -> None:
+def main(
+    argv: list[str] | None = None,
+    *,
+    agent_factory: AgentFactory | None = None,
+    runtime_factory: RuntimeFactory | None = None,
+    session_store_factory: SessionStoreFactory | None = None,
+    config_manager_factory: ConfigManagerFactory | None = None,
+) -> None:
     args = parse_args(argv or sys.argv[1:])
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         raise SystemExit("OPENAI_API_KEY is required")
     cwd = Path(args.cwd).resolve()
-    store = SessionStore()
-    config_manager = ConfigManager()
+    agent_builder = agent_factory or (lambda cfg, runtime, session_store: Agent(cfg, runtime, session_store=session_store))
+    runtime_builder = runtime_factory or CapabilityRuntime
+    store_builder = session_store_factory or SessionStore
+    config_builder = config_manager_factory or ConfigManager
+    store = store_builder()
+    config_manager = config_builder()
 
     def load_runtime() -> ResolvedRuntimeConfig:
         nonlocal config_manager
@@ -186,8 +204,8 @@ def main(argv: list[str] | None = None) -> None:
         return resolve_runtime_config(raw_config, args.model, args.base_url, args.system_prompt, env=os.environ)
 
     runtime_config = load_runtime()
-    capability_runtime = CapabilityRuntime(cwd)
-    agent = Agent(
+    capability_runtime = runtime_builder(cwd)
+    agent = agent_builder(
         AgentConfig(
             model=runtime_config.model,
             api_key=api_key,
@@ -195,8 +213,8 @@ def main(argv: list[str] | None = None) -> None:
             cwd=cwd,
             system_prompt=runtime_config.system_prompt,
         ),
-        capability_runtime=capability_runtime,
-        session_store=store,
+        capability_runtime,
+        store,
     )
     if args.session and not args.new_session:
         agent.load_session(args.session)
