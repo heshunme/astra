@@ -568,6 +568,11 @@ context_files:
 - `/runtime`
 - `/runtime warnings`
 
+当前已进一步落地：
+
+- `/runtime prompt`：面向人工查看最终 assembled system prompt，以及实际采用的 fragment 顺序与来源
+- `/runtime json prompt`：面向程序读取同一份 prompt inspection 数据
+
 这些命令不是第一阶段必需，但 diagnostics 数据结构第一阶段就应该存在。
 
 ## 15. 安全边界
@@ -734,3 +739,44 @@ context_files:
 都可以作为“能力”增量接入，而不再要求持续修改核心执行代码。
 
 这才是为 agent 自我升级和自我迭代提供基础设施的最关键一步。
+
+## 21. 当前进度（2026-03-08）
+
+### 已完成（Phase 1 已落地）
+
+- 已引入最小 `CapabilityRuntime`，统一承载 tools、commands、prompts、skills 的加载结果。
+- 已将内置工具改为先构建全量集合，再由 runtime 按配置筛选启用。
+- 已将 CLI slash commands 改为 registry 分派，不再依赖单个长 `if/elif` 分支。
+- 已将 `system_prompt` 接入 prompt 组装链路，当前支持 `builtin:base`、`config:system`、项目 prompt 文件和本地 skill 文本资源。
+- 已支持 `/skill:<name>` 与 `/template:<name>` 的最小激活动作，作用域为当前进程会话。
+- 已落地 `/runtime`、`/runtime warnings`、`/runtime json`。
+- 已落地 `/runtime prompt` 与 `/runtime json prompt`，用于检查最终 assembled system prompt 及其 fragment 顺序。
+- 已完成基础校验：`compileall`、`pyi --help`、runtime/prompt/skill 本地冒烟。
+
+### 建议优先落地（Phase 2）
+
+- 持久化会话级 skill/template 激活状态，避免重启进程后丢失。
+- 引入独立的 context source 抽象，不再让 `context_files` 只能折叠进 system prompt。
+- 增强 runtime diagnostics 的结构化输出，至少覆盖 skipped/missing fragment 的机器可读结果。
+- 在不引入代码扩展的前提下，继续扩充文本资源驱动能力。
+
+### 中期候选（Phase 3）
+
+- 实现 compaction strategy 与 `/compact`。
+- 引入 Python 代码扩展入口，但仍保持显式启用与清晰诊断。
+- 支持 provider capability 感知，并据此控制 prompt/tool 的条件启用。
+- 视需要引入自动文件监听，减少手动 `/reload` 成本。
+
+### 仍待决定
+
+- 是否将 skill/template 激活状态写入 session metadata，而不是只放在当前进程内存中。
+- 是否把 `context_files` 从“拼接进 system prompt”升级为单独的上下文装配层。
+- 是否需要把 prompt/template/skill 名称冲突从 warning 提升为硬错误。
+- 是否需要给 `/skill:<name>` 增加停用、列出、临时/持久两种模式。
+- 是否需要把 `/runtime json prompt` 进一步扩展为 provider request 级别的完整 preflight inspection。
+
+### 暂不建议现在做
+
+- 在当前阶段引入完整自动文件监听。
+- 在当前阶段引入大而全的 extension hook 管线。
+- 在当前阶段把 prompt inspection 扩展到过多非核心诊断字段，导致 `/runtime` 家族命令失去聚焦。

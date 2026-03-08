@@ -304,3 +304,35 @@ When the Python project gains a new subsystem or meaningfully narrows a gap, upd
 - moving the capability from “missing” to “present” or “partially present”
 - describing the exact current boundary, not the aspirational end state
 - avoiding vague claims like “supports parity” unless the behavior is actually comparable
+
+## 2026-03-08 update
+
+The Python project now also includes a minimal capability runtime layer.
+
+Newly present or partially present:
+
+- Registry-driven command dispatch instead of a single hard-coded CLI command tree
+- Prompt assembly beyond a single direct `system_prompt` string
+- Local prompt loading from `.pyi/prompts/*.md`
+- Local skill loading from `.pyi/skills/*/skill.yaml`
+- Process-session activation via `/skill:<name>` and `/template:<name>`
+- Runtime inspection via `/runtime` and `/runtime warnings`
+- Final prompt inspection via `/runtime prompt` and `/runtime json prompt`
+
+The current prompt inspection focuses on the effective assembled prompt and the fragments that actually participated in assembly.
+
+What this narrows:
+
+- It meaningfully narrows the gap around core extensibility plumbing.
+- It partially narrows the gap around broader command surface.
+- It partially narrows the gap around config/resource loading.
+
+What is still missing even after this update:
+
+- No persistent skill/template activation state across process restarts
+- No standalone context-source abstraction yet; skill context files are still folded into prompt text
+- No compaction strategy or `/compact`
+- No Python code extensions or extension hook pipeline
+- No provider capability-aware prompt/tool activation
+- No automatic file watching; resource changes still require `/reload`
+- No structured skipped-fragment inspection yet; prompt inspection currently focuses on the effective assembled result

@@ -180,8 +180,11 @@ class Agent:
         refs.extend(f"template:{name}" for name in prompt_state.templates)
         return refs
 
+    def inspect_prompt(self):
+        return self.runtime.inspect_prompt(self.runtime_config, self._active_prompt_refs())
+
     def _refresh_system_prompt(self) -> None:
-        self.current_system_prompt = self.runtime.assemble_system_prompt(self.runtime_config, self._active_prompt_refs())
+        self.current_system_prompt = self.inspect_prompt().assembled
 
     def _build_provider_messages(self) -> list[dict[str, object]]:
         messages: list[dict[str, object]] = []

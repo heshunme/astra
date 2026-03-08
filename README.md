@@ -94,12 +94,47 @@ context_files:
 
 Only prompt and skill resources referenced by config or activated in-session are injected into the final system prompt.
 
+## Runtime inspection
+
+Use runtime inspection commands to verify what the agent is currently using.
+
+- `/runtime`
+  - Human-readable runtime summary
+- `/runtime warnings`
+  - Only runtime warnings
+- `/runtime json`
+  - Machine-readable runtime state summary
+- `/runtime prompt`
+  - Human-readable assembled system prompt plus fragment order and sources
+- `/runtime json prompt`
+  - Machine-readable assembled system prompt plus fragment metadata
+
+Example:
+
+```text
+/runtime prompt
+Runtime prompt
+fragments=2
+char_length=123
+fragment[1]=builtin:base source=builtin chars=86
+fragment[2]=prompt:repo-rules source=E:\repo\.pyi\prompts\repo-rules.md chars=37
+assembled:
+...
+```
+
+This is the preferred way to check whether config, prompt files, skills, and in-session `/skill:` or `/template:` activations actually changed the final prompt sent to the provider.
+
 ## Supported commands
 
 - `/help`
 - `/model [name]`
 - `/base-url [url]`
 - `/tools`
+- `/runtime`
+- `/runtime warnings`
+- `/runtime json`
+- `/runtime prompt`
+- `/runtime json prompt`
 - `/sessions`
 - `/switch <session-id>`
 - `/fork [name]`
@@ -110,3 +145,7 @@ Only prompt and skill resources referenced by config or activated in-session are
 - `/exit`
 - `/skill:<name>`
 - `/template:<name>`
+
+Use `/runtime prompt` for a human-readable view of the fully assembled system prompt and the fragment order that produced it.
+
+Use `/runtime json prompt` for a machine-readable version of the same inspection data.

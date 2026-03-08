@@ -23,6 +23,19 @@ class PromptFragment:
 
 
 @dataclass(slots=True)
+class PromptInspectionFragment:
+    key: str
+    source: str
+    text_length: int
+
+
+@dataclass(slots=True)
+class PromptInspection:
+    assembled: str
+    fragments: list[PromptInspectionFragment] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class SkillSpec:
     name: str
     summary: str
@@ -196,13 +209,17 @@ class CapabilityRuntime:
     def warnings(self) -> list[str]:
         return list(self._snapshot.diagnostics.warnings)
 
-    def assemble_system_prompt(self, runtime_config: ResolvedRuntimeConfig, active_refs: list[str] | None = None) -> str:
+    def inspect_prompt(
+        self,
+        runtime_config: ResolvedRuntimeConfig,
+        active_refs: list[str] | None = None,
+    ) -> PromptInspection:
         ordered_refs = self._default_prompt_refs(runtime_config)
-        for ref in active_refs or []:
-            ordered_refs.append(ref)
+        ordered_refs.extend(active_refs or [])
 
         seen: set[str] = set()
         prompt_parts: list[str] = []
+        fragments: list[PromptInspectionFragment] = []
         for ref in ordered_refs:
             normalized_ref = self.normalize_prompt_ref(ref)
             if normalized_ref in seen:
@@ -212,9 +229,20 @@ class CapabilityRuntime:
             if fragment is None:
                 continue
             text = fragment.text.strip()
-            if text:
-                prompt_parts.append(text)
-        return "\n\n".join(prompt_parts)
+            if not text:
+                continue
+            prompt_parts.append(text)
+            fragments.append(
+                PromptInspectionFragment(
+                    key=fragment.key,
+                    source=fragment.source,
+                    text_length=len(text),
+                )
+            )
+        return PromptInspection(assembled="\n\n".join(prompt_parts), fragments=fragments)
+
+    def assemble_system_prompt(self, runtime_config: ResolvedRuntimeConfig, active_refs: list[str] | None = None) -> str:
+        return self.inspect_prompt(runtime_config, active_refs).assembled
 
     def normalize_prompt_ref(self, ref: str) -> str:
         normalized_ref = ref.strip()

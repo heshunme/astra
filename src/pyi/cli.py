@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import json
 import os
 import signal
 import sys
@@ -69,9 +70,61 @@ def print_reload_summary(agent: Agent, message: str, warnings: list[str] | None 
         print(f"warning={warning}")
 
 
-def print_runtime_summary(agent: Agent, show_warnings_only: bool = False) -> None:
+def build_runtime_summary(agent: Agent) -> dict[str, object]:
     snapshot = agent.runtime.snapshot()
     warnings = agent.runtime.warnings()
+    return {
+        "model": agent.config.model,
+        "base_url": agent.config.base_url,
+        "tools": list(agent.tools),
+        "prompts": {
+            "order": list(agent.runtime_config.prompts.order),
+            "available": agent.runtime.list_prompt_keys(),
+            "loaded": list(snapshot.diagnostics.loaded_prompts),
+        },
+        "skills": {
+            "available": agent.runtime.list_skill_names(),
+            "active": list(agent.active_skills),
+            "loaded": list(snapshot.diagnostics.loaded_skills),
+        },
+        "templates": {
+            "available": agent.runtime.list_template_names(),
+            "active": list(agent.active_templates),
+        },
+        "tool_defaults": {
+            "read_max_lines": agent.runtime_config.tools.read_max_lines,
+            "bash_timeout_seconds": agent.runtime_config.tools.bash_timeout_seconds,
+            "bash_max_output_bytes": agent.runtime_config.tools.bash_max_output_bytes,
+        },
+        "warnings": warnings,
+    }
+
+
+def build_runtime_prompt_summary(agent: Agent) -> dict[str, object]:
+    inspection = agent.inspect_prompt()
+    return {
+        "assembled": inspection.assembled,
+        "char_length": len(inspection.assembled),
+        "fragment_count": len(inspection.fragments),
+        "fragments": [
+            {
+                "key": fragment.key,
+                "source": fragment.source,
+                "text_length": fragment.text_length,
+            }
+            for fragment in inspection.fragments
+        ],
+    }
+
+
+def print_runtime_summary(agent: Agent, show_warnings_only: bool = False) -> None:
+    summary = build_runtime_summary(agent)
+    warnings = summary["warnings"]
+    prompt_summary = summary["prompts"]
+    skill_summary = summary["skills"]
+    template_summary = summary["templates"]
+    if not isinstance(warnings, list):
+        warnings = []
     if show_warnings_only:
         if not warnings:
             print("No runtime warnings")
@@ -82,15 +135,36 @@ def print_runtime_summary(agent: Agent, show_warnings_only: bool = False) -> Non
 
     print("Runtime summary")
     print(f"tools={', '.join(agent.tools) or '(none)'}")
-    print(f"prompts.order={', '.join(agent.runtime_config.prompts.order) or '(none)'}")
-    print(f"prompts.available={', '.join(agent.runtime.list_prompt_keys()) or '(none)'}")
-    print(f"skills.available={', '.join(agent.runtime.list_skill_names()) or '(none)'}")
-    print(f"templates.available={', '.join(agent.runtime.list_template_names()) or '(none)'}")
-    print(f"skills.active={', '.join(agent.active_skills) or '(none)'}")
-    print(f"templates.active={', '.join(agent.active_templates) or '(none)'}")
-    print(f"prompts.loaded={', '.join(snapshot.diagnostics.loaded_prompts) or '(none)'}")
-    print(f"skills.loaded={', '.join(snapshot.diagnostics.loaded_skills) or '(none)'}")
+    print(f"prompts.order={', '.join(prompt_summary['order']) or '(none)'}")
+    print(f"prompts.available={', '.join(prompt_summary['available']) or '(none)'}")
+    print(f"skills.available={', '.join(skill_summary['available']) or '(none)'}")
+    print(f"templates.available={', '.join(template_summary['available']) or '(none)'}")
+    print(f"skills.active={', '.join(skill_summary['active']) or '(none)'}")
+    print(f"templates.active={', '.join(template_summary['active']) or '(none)'}")
+    print(f"prompts.loaded={', '.join(prompt_summary['loaded']) or '(none)'}")
+    print(f"skills.loaded={', '.join(skill_summary['loaded']) or '(none)'}")
     print(f"warnings.count={len(warnings)}")
+
+
+def print_runtime_prompt(agent: Agent) -> None:
+    prompt_summary = build_runtime_prompt_summary(agent)
+    fragments = prompt_summary["fragments"]
+    print("Runtime prompt")
+    print(f"fragments={prompt_summary['fragment_count']}")
+    print(f"char_length={prompt_summary['char_length']}")
+    if isinstance(fragments, list) and fragments:
+        for index, fragment in enumerate(fragments, start=1):
+            print(
+                f"fragment[{index}]={fragment['key']} source={fragment['source']} chars={fragment['text_length']}"
+            )
+    else:
+        print("fragments=(none)")
+    print("assembled:")
+    assembled = prompt_summary["assembled"]
+    if isinstance(assembled, str) and assembled:
+        print(assembled)
+    else:
+        print("(empty)")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -281,10 +355,22 @@ def main(argv: list[str] | None = None) -> None:
 
         def runtime_command(line: str) -> bool:
             _command_name, _, remainder = line.partition(" ")
-            if remainder.strip() == "warnings":
+            normalized_remainder = remainder.strip()
+            if normalized_remainder == "json":
+                print(json.dumps(build_runtime_summary(agent), ensure_ascii=False, indent=2))
+                return True
+            if normalized_remainder == "json prompt":
+                payload = build_runtime_summary(agent)
+                payload["prompt"] = build_runtime_prompt_summary(agent)
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+                return True
+            if normalized_remainder == "warnings":
                 print_runtime_summary(agent, show_warnings_only=True)
                 return True
-            if remainder.strip():
+            if normalized_remainder == "prompt":
+                print_runtime_prompt(agent)
+                return True
+            if normalized_remainder:
                 return False
             print_runtime_summary(agent)
             return True
@@ -360,7 +446,7 @@ def main(argv: list[str] | None = None) -> None:
         )
         command_registry.register(CommandSpec(name="/tools", usage="/tools", summary="Show runtime summary", handler=tools_command))
         command_registry.register(
-            CommandSpec(name="/runtime", usage="/runtime | /runtime warnings", summary="Show capability runtime state", handler=runtime_command)
+            CommandSpec(name="/runtime", usage="/runtime | /runtime warnings | /runtime json | /runtime prompt | /runtime json prompt", summary="Show capability runtime state", handler=runtime_command)
         )
         command_registry.register(
             CommandSpec(name="/sessions", usage="/sessions", summary="List saved sessions", handler=sessions_command)
