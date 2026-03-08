@@ -1,0 +1,19 @@
+tasks:
+  - id: cli-help-stability
+    objective: Improve CLI help discoverability with one small safe refactor while preserving existing command behavior.
+    max_steps: 3
+    max_reverts: 2
+    max_total_seconds: 900
+    tags: [cli, docs]
+  - id: runtime-summary-signal
+    objective: Make one small runtime inspection improvement that increases operator clarity without broad refactors.
+    max_steps: 3
+    max_reverts: 2
+    max_total_seconds: 900
+    tags: [runtime, observability]
+  - id: iteration-guard-hardening
+    objective: Harden one self-iteration edge case with a focused patch and matching tests.
+    max_steps: 3
+    max_reverts: 2
+    max_total_seconds: 900
+    tags: [iteration, safety]

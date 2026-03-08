@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from astra.iteration import GateSpec, IterationExecutor
+from astra.iteration import GateSpec, IterationExecutor, IterationRunRecord
 
 
 pytestmark = pytest.mark.unit
@@ -201,3 +201,103 @@ def test_iteration_auto_fails_fast_on_env_error(tmp_path: Path) -> None:
     assert record.loop_final_decision == "failed"
     assert record.loop_stop_reason == "env_failure"
     assert record.loop_step == 1
+
+
+def test_load_benchmark_tasks_skips_invalid_entries(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    tasks_file = workspace / ".astra" / "benchmarks" / "tasks.yaml"
+    tasks_file.parent.mkdir(parents=True, exist_ok=True)
+    tasks_file.write_text(
+        """
+tasks:
+  - id: ok-task
+    objective: Keep it green
+  - id: ""
+    objective: missing id
+  - id: bad-tags
+    objective: wrong tags
+    tags: invalid
+  - id: ok-task
+    objective: duplicate id
+""".strip(),
+        encoding="utf-8",
+    )
+
+    executor = IterationExecutor(workspace)
+    tasks, warnings = executor.load_benchmark_tasks(task_path=tasks_file)
+
+    assert [task.id for task in tasks] == ["ok-task"]
+    assert len(warnings) == 3
+    assert any("tasks[2].id" in warning for warning in warnings)
+    assert any("tasks[3].tags" in warning for warning in warnings)
+    assert any("duplicated" in warning for warning in warnings)
+
+
+def test_run_benchmark_aggregates_results_and_persists_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    tasks_file = workspace / ".astra" / "benchmarks" / "tasks.yaml"
+    tasks_file.parent.mkdir(parents=True, exist_ok=True)
+    tasks_file.write_text(
+        """
+tasks:
+  - id: t-pass
+    objective: pass objective
+    max_steps: 2
+  - id: t-fail
+    objective: fail objective
+    max_steps: 1
+""".strip(),
+        encoding="utf-8",
+    )
+
+    executor = IterationExecutor(workspace)
+    seen: list[str] = []
+
+    def fake_run_auto(
+        self, *, session_id: str, iterate_fn, objective=None, max_steps=3, max_reverts=2, max_total_seconds=900
+    ) -> IterationRunRecord:  # type: ignore[no-untyped-def]
+        if objective == "pass objective":
+            status: str = "accepted"
+            failure_class = None
+            loop_stop_reason: str = "accepted"
+            score = 1.0
+        else:
+            status = "reverted"
+            failure_class = "test"
+            loop_stop_reason = "max_reverts"
+            score = 0.25
+        run_id = f"run-{len(seen) + 1}"
+        seen.append(run_id)
+        return IterationRunRecord(
+            run_id=run_id,
+            session_id=session_id,
+            checkpoint_id=f"ckpt-{len(seen)}",
+            final_decision=status,  # type: ignore[arg-type]
+            score=score,
+            failure_class=failure_class,  # type: ignore[arg-type]
+            duration_seconds=0.5,
+            objective=objective,
+            loop_id=f"loop-{len(seen)}",
+            loop_step=1,
+            loop_final_decision="accepted" if status == "accepted" else "failed",
+            loop_stop_reason=loop_stop_reason,  # type: ignore[arg-type]
+        )
+
+    monkeypatch.setattr(IterationExecutor, "run_auto", fake_run_auto)
+    record = executor.run_benchmark(
+        session_id="s-bench",
+        iterate_fn=lambda _task, _step: None,
+        task_path=tasks_file,
+    )
+
+    assert record.total_tasks == 2
+    assert record.passed_tasks == 1
+    assert record.accept_rate == 0.5
+    assert record.avg_score == pytest.approx(0.625)
+    assert record.failure_breakdown == {"test": 1}
+    assert len(record.task_results) == 2
+    assert executor.last_benchmark_record() is not None

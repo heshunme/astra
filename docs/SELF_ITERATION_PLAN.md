@@ -100,3 +100,32 @@ Included:
 Notes:
 
 - Checkpointing remains workspace file snapshot based; no git-commit/branch checkpointing is introduced in Phase 2.
+
+## Phase 3 (Implemented)
+
+Phase 3 adds a repo-local benchmark regression harness for measurable iteration quality.
+
+Included:
+
+- `/iterate benchmark [path]`
+  - Default task file: `.astra/benchmarks/tasks.yaml`
+- YAML benchmark task schema:
+  - `id`
+  - `objective`
+  - optional budgets: `max_steps`, `max_reverts`, `max_total_seconds`
+  - optional `tags`
+- Benchmark execution model:
+  - sequentially run tasks via bounded `/iterate auto` semantics
+  - aggregate pass/fail outcomes into a scoreboard
+- Benchmark run ledger:
+  - `.astra/logs/iteration_benchmarks.jsonl`
+  - includes task results, accept rate, average score/duration, and failure breakdown
+- Runtime inspection summary via `/runtime json`:
+  - latest benchmark run id
+  - latest accept rate and task totals
+  - latest benchmark failure breakdown
+
+Notes:
+
+- First version focuses on pass-rate-first scoring (`accept_rate`) with `avg_score` and `avg_duration_seconds` as secondary metrics.
+- Malformed benchmark tasks fail soft (warning + skip) so one bad task does not block the full benchmark run.

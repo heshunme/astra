@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from astra import cli
-from astra.iteration import IterationRunRecord
+from astra.iteration import BenchmarkRunRecord, BenchmarkTaskResult, IterationRunRecord
 from astra.session import SessionStore
 
 
@@ -137,6 +137,99 @@ def test_runtime_json_includes_loop_fields_from_persisted_record(
     assert '"last_loop_id": "loop-9"' in out
     assert '"last_loop_step": 3' in out
     assert '"last_loop_stop_reason": "max_steps"' in out
+
+
+def test_iterate_benchmark_command_updates_runtime_json(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+
+    def fake_run_benchmark(self, *, session_id: str, iterate_fn, task_path=None):  # type: ignore[no-untyped-def]
+        return BenchmarkRunRecord(
+            benchmark_run_id="bench-1",
+            session_id=session_id,
+            task_source=".astra/benchmarks/tasks.yaml",
+            total_tasks=1,
+            passed_tasks=1,
+            accept_rate=1.0,
+            avg_score=1.0,
+            avg_duration_seconds=0.2,
+            duration_seconds=0.2,
+            task_results=[
+                BenchmarkTaskResult(
+                    task_id="t1",
+                    objective="tighten checks",
+                    status="passed",
+                    run_id="run-1",
+                    final_decision="accepted",
+                    score=1.0,
+                    duration_seconds=0.2,
+                    loop_stop_reason="accepted",
+                )
+            ],
+            failure_breakdown={},
+            warnings=[],
+        )
+
+    monkeypatch.setattr(cli.IterationExecutor, "run_benchmark", fake_run_benchmark)
+    monkeypatch.setattr(
+        builtins,
+        "input",
+        InputFeeder(["/iterate benchmark", "/runtime json", "/exit"]),
+    )
+    cli.main(["--cwd", str(cwd)])
+
+    out = capsys.readouterr().out
+    assert "Benchmark status" in out
+    assert "accept_rate=1.000" in out
+    assert '"benchmark"' in out
+    assert '"last_run_id": "bench-1"' in out
+    assert '"last_accept_rate": 1.0' in out
+
+
+def test_runtime_json_includes_benchmark_fields_from_persisted_record(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+    benchmark_log_file = cwd / ".astra" / "logs" / "iteration_benchmarks.jsonl"
+    benchmark_log_file.parent.mkdir(parents=True, exist_ok=True)
+    benchmark_log_file.write_text(
+        json.dumps(
+            {
+                "benchmark_run_id": "bench-77",
+                "session_id": "s-1",
+                "task_source": ".astra/benchmarks/tasks.yaml",
+                "total_tasks": 2,
+                "passed_tasks": 1,
+                "accept_rate": 0.5,
+                "avg_score": 0.6,
+                "avg_duration_seconds": 1.2,
+                "duration_seconds": 2.4,
+                "failure_breakdown": {"test": 1},
+                "warnings": ["tasks[2] skipped"],
+                "task_results": [],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(builtins, "input", InputFeeder(["/runtime json", "/exit"]))
+    cli.main(["--cwd", str(cwd)])
+
+    out = capsys.readouterr().out
+    assert '"benchmark"' in out
+    assert '"last_run_id": "bench-77"' in out
+    assert '"last_total_tasks": 2' in out
+    assert '"last_accept_rate": 0.5' in out
+    assert '"last_failure_breakdown": {' in out
 
 
 def test_model_and_base_url_commands(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -20,7 +20,7 @@ from .config import (
     merged_env,
     resolve_runtime_config,
 )
-from .iteration import IterationExecutor, IterationRunRecord
+from .iteration import BenchmarkRunRecord, BenchmarkTask, IterationExecutor, IterationRunRecord
 from .runtime import CapabilityRuntime, CommandRegistry, CommandSpec, PrefixCommandSpec
 from .session import SessionStore
 
@@ -95,7 +95,11 @@ def print_tools_summary(agent: Agent) -> None:
     print(f"bash.max_output_bytes={agent.runtime_config.tools.bash_max_output_bytes}")
 
 
-def build_runtime_summary(agent: Agent, iteration_record: IterationRunRecord | None = None) -> dict[str, object]:
+def build_runtime_summary(
+    agent: Agent,
+    iteration_record: IterationRunRecord | None = None,
+    benchmark_record: BenchmarkRunRecord | None = None,
+) -> dict[str, object]:
     snapshot = agent.runtime.snapshot()
     warnings = agent.runtime.warnings()
     return {
@@ -131,6 +135,18 @@ def build_runtime_summary(agent: Agent, iteration_record: IterationRunRecord | N
             "last_loop_decision": iteration_record.loop_final_decision if iteration_record else None,
             "last_loop_stop_reason": iteration_record.loop_stop_reason if iteration_record else None,
         },
+        "benchmark": {
+            "last_run_id": benchmark_record.benchmark_run_id if benchmark_record else None,
+            "last_task_source": benchmark_record.task_source if benchmark_record else None,
+            "last_total_tasks": benchmark_record.total_tasks if benchmark_record else None,
+            "last_passed_tasks": benchmark_record.passed_tasks if benchmark_record else None,
+            "last_accept_rate": benchmark_record.accept_rate if benchmark_record else None,
+            "last_avg_score": benchmark_record.avg_score if benchmark_record else None,
+            "last_avg_duration_seconds": benchmark_record.avg_duration_seconds if benchmark_record else None,
+            "last_duration_seconds": benchmark_record.duration_seconds if benchmark_record else None,
+            "last_failure_breakdown": benchmark_record.failure_breakdown if benchmark_record else None,
+            "last_warnings": benchmark_record.warnings if benchmark_record else [],
+        },
         "warnings": warnings,
     }
 
@@ -156,13 +172,15 @@ def print_runtime_summary(
     agent: Agent,
     show_warnings_only: bool = False,
     iteration_record: IterationRunRecord | None = None,
+    benchmark_record: BenchmarkRunRecord | None = None,
 ) -> None:
-    summary = build_runtime_summary(agent, iteration_record)
+    summary = build_runtime_summary(agent, iteration_record, benchmark_record)
     warnings = summary["warnings"]
     prompt_summary = summary["prompts"]
     skill_summary = summary["skills"]
     template_summary = summary["templates"]
     iteration_summary = summary["iteration"]
+    benchmark_summary = summary["benchmark"]
     if not isinstance(warnings, list):
         warnings = []
     if show_warnings_only:
@@ -194,6 +212,15 @@ def print_runtime_summary(
     )
     print(f"iteration.last_loop_decision={iteration_summary['last_loop_decision'] or '(none)'}")
     print(f"iteration.last_loop_stop_reason={iteration_summary['last_loop_stop_reason'] or '(none)'}")
+    print(f"benchmark.last_run_id={benchmark_summary['last_run_id'] or '(none)'}")
+    print(f"benchmark.last_task_source={benchmark_summary['last_task_source'] or '(none)'}")
+    print(f"benchmark.last_total_tasks={benchmark_summary['last_total_tasks'] if benchmark_summary['last_total_tasks'] is not None else '(none)'}")
+    print(
+        f"benchmark.last_passed_tasks={benchmark_summary['last_passed_tasks'] if benchmark_summary['last_passed_tasks'] is not None else '(none)'}"
+    )
+    print(
+        f"benchmark.last_accept_rate={benchmark_summary['last_accept_rate'] if benchmark_summary['last_accept_rate'] is not None else '(none)'}"
+    )
     print(f"warnings.count={len(warnings)}")
 
 
@@ -242,6 +269,32 @@ def print_iteration_status(record: IterationRunRecord | None) -> None:
         return
     for gate in record.gate_results:
         print(f"gate.{gate.name}=status:{gate.status} exit:{gate.exit_code} duration:{gate.duration_seconds:.2f}s")
+
+
+def print_benchmark_status(record: BenchmarkRunRecord | None) -> None:
+    if record is None:
+        print("No benchmark runs")
+        return
+    print("Benchmark status")
+    print(f"benchmark_run_id={record.benchmark_run_id}")
+    print(f"task_source={record.task_source}")
+    print(f"total_tasks={record.total_tasks}")
+    print(f"passed_tasks={record.passed_tasks}")
+    print(f"accept_rate={record.accept_rate:.3f}")
+    print(f"avg_score={record.avg_score:.3f}")
+    print(f"avg_duration_seconds={record.avg_duration_seconds:.3f}")
+    if record.failure_breakdown:
+        breakdown = ", ".join(f"{key}:{value}" for key, value in sorted(record.failure_breakdown.items()))
+        print(f"failure_breakdown={breakdown}")
+    else:
+        print("failure_breakdown=(none)")
+    for warning in record.warnings:
+        print(f"warning={warning}")
+    for result in record.task_results:
+        print(
+            f"task.{result.task_id}=status:{result.status} decision:{result.final_decision} "
+            f"score:{result.score:.3f} stop:{result.loop_stop_reason or '(none)'}"
+        )
 
 
 def read_cli_line(prompt: str = "astra> ") -> str:
@@ -331,6 +384,7 @@ def main(
     command_registry = CommandRegistry()
     iteration_executor = IterationExecutor(cwd)
     last_iteration_record = iteration_executor.last_record()
+    last_benchmark_record = iteration_executor.last_benchmark_record()
 
     def print_help() -> None:
         for line in command_registry.help_lines():
@@ -421,7 +475,7 @@ def main(
             print(f"Reload failed after code reload: {result.message}")
 
     def register_commands() -> None:
-        nonlocal last_iteration_record
+        nonlocal last_iteration_record, last_benchmark_record
 
         def help_command(_line: str) -> bool:
             print_help()
@@ -477,26 +531,41 @@ def main(
             _command_name, _, remainder = line.partition(" ")
             normalized_remainder = remainder.strip()
             if normalized_remainder == "json":
-                print(json.dumps(build_runtime_summary(agent, last_iteration_record), ensure_ascii=False, indent=2))
+                print(
+                    json.dumps(
+                        build_runtime_summary(agent, last_iteration_record, last_benchmark_record),
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
                 return True
             if normalized_remainder == "json prompt":
-                payload = build_runtime_summary(agent, last_iteration_record)
+                payload = build_runtime_summary(agent, last_iteration_record, last_benchmark_record)
                 payload["prompt"] = build_runtime_prompt_summary(agent)
                 print(json.dumps(payload, ensure_ascii=False, indent=2))
                 return True
             if normalized_remainder == "warnings":
-                print_runtime_summary(agent, show_warnings_only=True, iteration_record=last_iteration_record)
+                print_runtime_summary(
+                    agent,
+                    show_warnings_only=True,
+                    iteration_record=last_iteration_record,
+                    benchmark_record=last_benchmark_record,
+                )
                 return True
             if normalized_remainder == "prompt":
                 print_runtime_prompt(agent)
                 return True
             if normalized_remainder:
                 return False
-            print_runtime_summary(agent, iteration_record=last_iteration_record)
+            print_runtime_summary(
+                agent,
+                iteration_record=last_iteration_record,
+                benchmark_record=last_benchmark_record,
+            )
             return True
 
         def iterate_command(line: str) -> bool:
-            nonlocal last_iteration_record
+            nonlocal last_iteration_record, last_benchmark_record
             _command_name, _, remainder = line.partition(" ")
             normalized_remainder = remainder.strip()
             if normalized_remainder == "status":
@@ -528,7 +597,34 @@ def main(
                     iterate_fn=run_single_iteration_prompt,
                     objective=objective or None,
                 )
+                last_benchmark_record = iteration_executor.last_benchmark_record()
                 print_iteration_status(last_iteration_record)
+                return True
+            if normalized_remainder.startswith("benchmark"):
+                benchmark_path_text = normalized_remainder[9:].strip()
+                benchmark_path = Path(benchmark_path_text) if benchmark_path_text else None
+
+                def run_benchmark_prompt(task: BenchmarkTask, step: int) -> str | None:
+                    result = agent.prompt(
+                        (
+                            f"{task.objective}\n\n"
+                            f"This is benchmark task '{task.id}' at auto-iteration step {step}. "
+                            "Keep the patch minimal and safe."
+                        ),
+                        on_event=stream_callback,
+                    )
+                    print()
+                    if result.error:
+                        return result.error
+                    return None
+
+                last_benchmark_record = iteration_executor.run_benchmark(
+                    session_id=agent.session.id,
+                    iterate_fn=run_benchmark_prompt,
+                    task_path=benchmark_path,
+                )
+                last_iteration_record = iteration_executor.last_record()
+                print_benchmark_status(last_benchmark_record)
                 return True
             if not normalized_remainder.startswith("auto"):
                 return False
@@ -554,6 +650,7 @@ def main(
                 iterate_fn=run_auto_iteration_prompt,
                 objective=objective or None,
             )
+            last_benchmark_record = iteration_executor.last_benchmark_record()
             print_iteration_status(last_iteration_record)
             return True
 
@@ -646,7 +743,7 @@ def main(
         command_registry.register(
             CommandSpec(
                 name="/iterate",
-                usage="/iterate once [objective] | /iterate auto [objective] | /iterate status",
+                usage="/iterate once [objective] | /iterate auto [objective] | /iterate benchmark [path] | /iterate status",
                 summary="Run bounded self-iteration or inspect last iteration result",
                 handler=iterate_command,
             )

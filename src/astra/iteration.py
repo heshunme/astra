@@ -6,13 +6,18 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Literal
+from typing import Callable, Literal, Mapping, cast
+
+import yaml
 
 
 FailureClass = Literal["syntax", "test", "cli", "env", "timeout", "unknown"]
 Decision = Literal["accepted", "reverted", "failed"]
 LoopDecision = Literal["accepted", "failed"]
 LoopStopReason = Literal["accepted", "max_steps", "max_reverts", "max_total_seconds", "env_failure"]
+BenchmarkTaskStatus = Literal["passed", "failed"]
+
+DEFAULT_BENCHMARK_TASK_PATH = ".astra/benchmarks/tasks.yaml"
 
 
 @dataclass(slots=True)
@@ -117,6 +122,139 @@ class IterationRunRecord:
 
 
 @dataclass(slots=True)
+class BenchmarkTask:
+    id: str
+    objective: str
+    max_steps: int = 3
+    max_reverts: int = 2
+    max_total_seconds: int = 900
+    tags: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "id": self.id,
+            "objective": self.objective,
+            "max_steps": self.max_steps,
+            "max_reverts": self.max_reverts,
+            "max_total_seconds": self.max_total_seconds,
+            "tags": list(self.tags),
+        }
+
+
+@dataclass(slots=True)
+class BenchmarkTaskResult:
+    task_id: str
+    objective: str
+    status: BenchmarkTaskStatus
+    run_id: str
+    final_decision: Decision
+    score: float
+    duration_seconds: float
+    failure_class: FailureClass | None = None
+    error: str | None = None
+    loop_id: str | None = None
+    loop_step: int | None = None
+    loop_stop_reason: LoopStopReason | None = None
+    changed_files: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "task_id": self.task_id,
+            "objective": self.objective,
+            "status": self.status,
+            "run_id": self.run_id,
+            "final_decision": self.final_decision,
+            "score": self.score,
+            "duration_seconds": self.duration_seconds,
+            "failure_class": self.failure_class,
+            "error": self.error,
+            "loop_id": self.loop_id,
+            "loop_step": self.loop_step,
+            "loop_stop_reason": self.loop_stop_reason,
+            "changed_files": list(self.changed_files),
+        }
+
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, object]) -> BenchmarkTaskResult:
+        return cls(
+            task_id=str(raw.get("task_id", "")),
+            objective=str(raw.get("objective", "")),
+            status=str(raw.get("status", "failed")),  # type: ignore[arg-type]
+            run_id=str(raw.get("run_id", "")),
+            final_decision=str(raw.get("final_decision", "failed")),  # type: ignore[arg-type]
+            score=float(raw.get("score", 0.0)),
+            duration_seconds=float(raw.get("duration_seconds", 0.0)),
+            failure_class=raw.get("failure_class") if isinstance(raw.get("failure_class"), str) else None,
+            error=raw.get("error") if isinstance(raw.get("error"), str) else None,
+            loop_id=raw.get("loop_id") if isinstance(raw.get("loop_id"), str) else None,
+            loop_step=raw.get("loop_step") if isinstance(raw.get("loop_step"), int) else None,
+            loop_stop_reason=raw.get("loop_stop_reason") if isinstance(raw.get("loop_stop_reason"), str) else None,
+            changed_files=[str(item) for item in raw.get("changed_files", []) if isinstance(item, str)],
+        )
+
+
+@dataclass(slots=True)
+class BenchmarkRunRecord:
+    benchmark_run_id: str
+    session_id: str
+    task_source: str
+    total_tasks: int
+    passed_tasks: int
+    accept_rate: float
+    avg_score: float
+    avg_duration_seconds: float
+    duration_seconds: float
+    task_results: list[BenchmarkTaskResult] = field(default_factory=list)
+    failure_breakdown: dict[str, int] = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "benchmark_run_id": self.benchmark_run_id,
+            "session_id": self.session_id,
+            "task_source": self.task_source,
+            "total_tasks": self.total_tasks,
+            "passed_tasks": self.passed_tasks,
+            "accept_rate": self.accept_rate,
+            "avg_score": self.avg_score,
+            "avg_duration_seconds": self.avg_duration_seconds,
+            "duration_seconds": self.duration_seconds,
+            "failure_breakdown": dict(self.failure_breakdown),
+            "warnings": list(self.warnings),
+            "task_results": [result.to_dict() for result in self.task_results],
+        }
+
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, object]) -> BenchmarkRunRecord:
+        task_results: list[BenchmarkTaskResult] = []
+        for item in raw.get("task_results", []):
+            if not isinstance(item, dict):
+                continue
+            task_results.append(BenchmarkTaskResult.from_dict(cast(dict[str, object], item)))
+        failure_breakdown_raw = raw.get("failure_breakdown")
+        failure_breakdown: dict[str, int] = {}
+        if isinstance(failure_breakdown_raw, dict):
+            for key, value in failure_breakdown_raw.items():
+                if isinstance(key, str) and isinstance(value, int):
+                    failure_breakdown[key] = value
+        warnings = [str(item) for item in raw.get("warnings", []) if isinstance(item, str)]
+        return cls(
+            benchmark_run_id=str(raw.get("benchmark_run_id", "")),
+            session_id=str(raw.get("session_id", "")),
+            task_source=str(raw.get("task_source", "")),
+            total_tasks=int(raw.get("total_tasks", 0)),
+            passed_tasks=int(raw.get("passed_tasks", 0)),
+            accept_rate=float(raw.get("accept_rate", 0.0)),
+            avg_score=float(raw.get("avg_score", 0.0)),
+            avg_duration_seconds=float(raw.get("avg_duration_seconds", 0.0)),
+            duration_seconds=float(raw.get("duration_seconds", 0.0)),
+            task_results=task_results,
+            failure_breakdown=failure_breakdown,
+            warnings=warnings,
+        )
+
+
+@dataclass(slots=True)
 class WorkspaceCheckpoint:
     checkpoint_id: str
     tracked_files: dict[str, bytes]
@@ -127,9 +265,16 @@ class IterationExecutor:
     AUTO_MAX_REVERTS = 2
     AUTO_MAX_TOTAL_SECONDS = 900
 
-    def __init__(self, cwd: Path, *, log_path: Path | None = None):
+    def __init__(
+        self,
+        cwd: Path,
+        *,
+        log_path: Path | None = None,
+        benchmark_log_path: Path | None = None,
+    ):
         self.cwd = cwd
         self.log_path = log_path or (cwd / ".astra" / "logs" / "iteration_runs.jsonl")
+        self.benchmark_log_path = benchmark_log_path or (cwd / ".astra" / "logs" / "iteration_benchmarks.jsonl")
 
     def run_once(
         self,
@@ -357,6 +502,127 @@ class IterationExecutor:
         self._append_record(fallback)
         return fallback
 
+    def run_benchmark(
+        self,
+        *,
+        session_id: str,
+        iterate_fn: Callable[[BenchmarkTask, int], str | None],
+        task_path: Path | None = None,
+    ) -> BenchmarkRunRecord:
+        benchmark_run_id = f"bench-{uuid.uuid4().hex[:12]}"
+        start = time.monotonic()
+        resolved_task_path = self._resolve_task_path(task_path)
+        tasks, warnings = self.load_benchmark_tasks(task_path=resolved_task_path)
+        task_results: list[BenchmarkTaskResult] = []
+        failure_breakdown: dict[str, int] = {}
+
+        for task in tasks:
+            run_record = self.run_auto(
+                session_id=session_id,
+                iterate_fn=lambda step, current_task=task: iterate_fn(current_task, step),
+                objective=task.objective,
+                max_steps=task.max_steps,
+                max_reverts=task.max_reverts,
+                max_total_seconds=task.max_total_seconds,
+            )
+            task_status: BenchmarkTaskStatus = "passed" if run_record.loop_final_decision == "accepted" else "failed"
+            if task_status == "failed":
+                failure_key = run_record.failure_class or "unknown"
+                failure_breakdown[failure_key] = failure_breakdown.get(failure_key, 0) + 1
+            task_results.append(
+                BenchmarkTaskResult(
+                    task_id=task.id,
+                    objective=task.objective,
+                    status=task_status,
+                    run_id=run_record.run_id,
+                    final_decision=run_record.final_decision,
+                    score=run_record.score,
+                    duration_seconds=run_record.duration_seconds,
+                    failure_class=run_record.failure_class,
+                    error=run_record.error,
+                    loop_id=run_record.loop_id,
+                    loop_step=run_record.loop_step,
+                    loop_stop_reason=run_record.loop_stop_reason,
+                    changed_files=list(run_record.changed_files),
+                )
+            )
+
+        total_tasks = len(task_results)
+        passed_tasks = sum(1 for result in task_results if result.status == "passed")
+        accept_rate = (passed_tasks / total_tasks) if total_tasks else 0.0
+        avg_score = (sum(result.score for result in task_results) / total_tasks) if total_tasks else 0.0
+        avg_duration_seconds = (
+            sum(result.duration_seconds for result in task_results) / total_tasks if total_tasks else 0.0
+        )
+        if total_tasks == 0:
+            warnings = [*warnings, f"No valid benchmark tasks loaded from {resolved_task_path}."]
+
+        benchmark_record = BenchmarkRunRecord(
+            benchmark_run_id=benchmark_run_id,
+            session_id=session_id,
+            task_source=self._display_path(resolved_task_path),
+            total_tasks=total_tasks,
+            passed_tasks=passed_tasks,
+            accept_rate=accept_rate,
+            avg_score=avg_score,
+            avg_duration_seconds=avg_duration_seconds,
+            duration_seconds=time.monotonic() - start,
+            task_results=task_results,
+            failure_breakdown=failure_breakdown,
+            warnings=warnings,
+        )
+        self._append_benchmark_record(benchmark_record)
+        return benchmark_record
+
+    def load_benchmark_tasks(self, *, task_path: Path | None = None) -> tuple[list[BenchmarkTask], list[str]]:
+        resolved_task_path = self._resolve_task_path(task_path)
+        warnings: list[str] = []
+        if not resolved_task_path.exists():
+            warnings.append(f"Benchmark task file does not exist: {resolved_task_path}")
+            return [], warnings
+
+        try:
+            loaded = yaml.safe_load(resolved_task_path.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError) as exc:
+            warnings.append(f"Failed to load benchmark task file {resolved_task_path}: {exc}")
+            return [], warnings
+
+        task_items: list[object]
+        if loaded is None:
+            warnings.append(f"Benchmark task file is empty: {resolved_task_path}")
+            return [], warnings
+        if isinstance(loaded, list):
+            task_items = list(loaded)
+        elif isinstance(loaded, dict):
+            raw_items = loaded.get("tasks")
+            if not isinstance(raw_items, list):
+                warnings.append(
+                    f"Benchmark task file must contain a top-level list or tasks list: {resolved_task_path}"
+                )
+                return [], warnings
+            task_items = raw_items
+        else:
+            warnings.append(f"Unsupported benchmark task format in {resolved_task_path}")
+            return [], warnings
+
+        tasks: list[BenchmarkTask] = []
+        seen_ids: set[str] = set()
+        for index, raw_task in enumerate(task_items, start=1):
+            if not isinstance(raw_task, dict):
+                warnings.append(f"tasks[{index}] must be a mapping; skipped.")
+                continue
+            try:
+                task = self._parse_benchmark_task(cast(dict[str, object], raw_task), index)
+            except ValueError as exc:
+                warnings.append(str(exc))
+                continue
+            if task.id in seen_ids:
+                warnings.append(f"tasks[{index}].id duplicated ({task.id}); skipped.")
+                continue
+            seen_ids.add(task.id)
+            tasks.append(task)
+        return tasks, warnings
+
     def last_record(self) -> IterationRunRecord | None:
         if not self.log_path.exists():
             return None
@@ -372,6 +638,23 @@ class IterationExecutor:
             if not isinstance(payload, dict):
                 continue
             return IterationRunRecord.from_dict(payload)
+        return None
+
+    def last_benchmark_record(self) -> BenchmarkRunRecord | None:
+        if not self.benchmark_log_path.exists():
+            return None
+        lines = self.benchmark_log_path.read_text(encoding="utf-8").splitlines()
+        for raw_line in reversed(lines):
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            return BenchmarkRunRecord.from_dict(payload)
         return None
 
     def _default_gates(self, python_path: Path) -> list[GateSpec]:
@@ -466,6 +749,11 @@ class IterationExecutor:
     def _append_record(self, record: IterationRunRecord) -> None:
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         with self.log_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record.to_dict(), ensure_ascii=False) + "\n")
+
+    def _append_benchmark_record(self, record: BenchmarkRunRecord) -> None:
+        self.benchmark_log_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.benchmark_log_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record.to_dict(), ensure_ascii=False) + "\n")
 
     def _changed_files(self) -> list[str]:
@@ -571,3 +859,47 @@ class IterationExecutor:
         if len(normalized) <= max_chars:
             return normalized
         return normalized[-max_chars:]
+
+    def _resolve_task_path(self, task_path: Path | None) -> Path:
+        if task_path is None:
+            return self.cwd / DEFAULT_BENCHMARK_TASK_PATH
+        if task_path.is_absolute():
+            return task_path
+        return (self.cwd / task_path).resolve()
+
+    def _display_path(self, path: Path) -> str:
+        try:
+            return str(path.relative_to(self.cwd))
+        except ValueError:
+            return str(path)
+
+    def _parse_benchmark_task(self, raw: Mapping[str, object], index: int) -> BenchmarkTask:
+        task_id = self._required_non_empty_string(raw.get("id"), f"tasks[{index}].id")
+        objective = self._required_non_empty_string(raw.get("objective"), f"tasks[{index}].objective")
+        max_steps = self._positive_int(raw.get("max_steps", self.AUTO_MAX_STEPS), f"tasks[{index}].max_steps")
+        max_reverts = self._positive_int(raw.get("max_reverts", self.AUTO_MAX_REVERTS), f"tasks[{index}].max_reverts")
+        max_total_seconds = self._positive_int(
+            raw.get("max_total_seconds", self.AUTO_MAX_TOTAL_SECONDS),
+            f"tasks[{index}].max_total_seconds",
+        )
+        tags_raw = raw.get("tags", [])
+        if not isinstance(tags_raw, list) or any(not isinstance(item, str) for item in tags_raw):
+            raise ValueError(f"tasks[{index}].tags must be a list of strings.")
+        return BenchmarkTask(
+            id=task_id,
+            objective=objective,
+            max_steps=max_steps,
+            max_reverts=max_reverts,
+            max_total_seconds=max_total_seconds,
+            tags=[str(tag) for tag in tags_raw],
+        )
+
+    def _required_non_empty_string(self, value: object, label: str) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{label} must be a non-empty string.")
+        return value.strip()
+
+    def _positive_int(self, value: object, label: str) -> int:
+        if not isinstance(value, int) or value <= 0:
+            raise ValueError(f"{label} must be a positive integer.")
+        return value

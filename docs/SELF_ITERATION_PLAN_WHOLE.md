@@ -13,14 +13,16 @@
   - [x] 统一 gate 判定与 stop-on-first-failure。
   - [x] gate 失败会触发自动回滚并记录结果。
  
-  3. 任务基准与回归集（P0）【未完成】
+  3. 任务基准与回归集（P0）【部分完成】
  
-  - [ ] 固定任务集 + 期望输出 + 迭代分数板尚未建立。
+  - [x] 固定 YAML 任务集（`.astra/benchmarks/tasks.yaml`）已建立。
+  - [x] `/iterate benchmark [path]` 与分数板（accept_rate/avg_score/avg_duration）已建立。
+  - [ ] 面向“期望输出”的细粒度判分（任务级预期断言）尚未建立。
  
-  4. 迭代控制器（P1）【部分完成】
+  4. 迭代控制器（P1）【已完成（Phase 2）】
  
   - [x] 单次状态机已具备：preflight -> checkpoint -> attempt -> validate -> accept/revert -> record。
-  - [ ] 多步闭环控制（最大步数/预算/失败次数）尚未实现。
+  - [x] 多步闭环控制已具备（最大步数/预算/失败次数，`/iterate auto`）。
  
   5. 结构化观测与实验账本（P1）【部分完成】
  
