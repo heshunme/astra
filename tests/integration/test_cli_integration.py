@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import builtins
+import io
+import sys
 from pathlib import Path
 
 import pytest
@@ -21,6 +23,11 @@ class InputFeeder:
             return next(self._lines)
         except StopIteration as exc:
             raise EOFError from exc
+
+
+class FallbackStdin:
+    def __init__(self, data: bytes):
+        self.buffer = io.BytesIO(data)
 
 
 def test_runtime_json_prompt_command(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -69,3 +76,27 @@ def test_switch_command(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.
 
     out = capsys.readouterr().out
     assert f"Switched to {second.id}" in out
+
+
+def test_cli_recovers_from_unicode_decode_error(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+
+    class BrokenInputOnce:
+        _called = False
+
+        def __call__(self, _prompt: str = "") -> str:
+            if not self._called:
+                self._called = True
+                raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+            raise EOFError
+
+    monkeypatch.setattr(builtins, "input", BrokenInputOnce())
+    monkeypatch.setattr(sys, "stdin", FallbackStdin(b"/exit\n"))
+
+    cli.main(["--cwd", str(cwd)])
+
+    captured = capsys.readouterr()
+    assert "Warning: stdin contains non-UTF-8 bytes" in captured.err

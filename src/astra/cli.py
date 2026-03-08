@@ -183,6 +183,25 @@ def print_runtime_prompt(agent: Agent) -> None:
         print("(empty)")
 
 
+def read_cli_line(prompt: str = "astra> ") -> str:
+    try:
+        return input(prompt)
+    except UnicodeDecodeError:
+        buffer = getattr(sys.stdin, "buffer", None)
+        if buffer is None:
+            raise
+        raw_line = buffer.readline()
+        if not isinstance(raw_line, (bytes, bytearray)):
+            raise
+        if not raw_line:
+            raise EOFError
+        print(
+            "Warning: stdin contains non-UTF-8 bytes; invalid bytes were replaced.",
+            file=sys.stderr,
+        )
+        return bytes(raw_line).decode("utf-8", errors="replace").rstrip("\r\n")
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -530,7 +549,7 @@ def main(
     print_help()
     while True:
         try:
-            line = input("astra> ").strip()
+            line = read_cli_line("astra> ").strip()
             if not line:
                 continue
             if line.startswith("/") and command_registry.dispatch(line):
