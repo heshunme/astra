@@ -16,6 +16,7 @@ This directory contains a Python implementation of the core `pi-mono` coding-age
 - Python 3.11+
 - `OPENAI_API_KEY`
 - Optional: `OPENAI_BASE_URL`, `OPENAI_MODEL`
+- Optional project `.env` file (for `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`)
 
 ## Quick start
 
@@ -39,6 +40,8 @@ Reloadable config is read from:
 - Project: `.astra/config.yaml`
 
 Project config overrides global config. Apply changes with `/reload`.
+
+Environment variables are also loaded from `<cwd>/.env` (if present). Values already set in the process environment take precedence over `.env`.
 
 Example:
 

@@ -22,6 +22,10 @@ class ConfigError(RuntimeError):
     pass
 
 
+class DotenvError(RuntimeError):
+    pass
+
+
 @dataclass(slots=True)
 class ToolRuntimeConfig:
     enabled_tools: list[str] = field(default_factory=lambda: list(DEFAULT_ENABLED_TOOLS))
@@ -134,6 +138,42 @@ def resolve_runtime_config(
         prompts=clone_prompt_runtime_config(config.prompts),
         capabilities=clone_capabilities_config(config.capabilities),
     )
+
+
+def merged_env(cwd: Path, env: Mapping[str, str] | None = None) -> dict[str, str]:
+    merged = dict(env or os.environ)
+    env_file = cwd / ".env"
+    parsed = _read_dotenv_file(env_file)
+    for key, value in parsed.items():
+        merged.setdefault(key, value)
+    return merged
+
+
+def _read_dotenv_file(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    result: dict[str, str] = {}
+    lines = path.read_text(encoding="utf-8").splitlines()
+    for line_number, raw in enumerate(lines, start=1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].strip()
+        if "=" not in line:
+            raise DotenvError(f"Invalid .env format at {path}:{line_number}")
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            raise DotenvError(f"Missing key in .env at {path}:{line_number}")
+        if value and value[0] in ("'", '"'):
+            quote = value[0]
+            if len(value) < 2 or value[-1] != quote:
+                raise DotenvError(f"Unclosed quote in .env at {path}:{line_number}")
+            value = value[1:-1]
+        result[key] = value
+    return result
 
 
 class ConfigManager:

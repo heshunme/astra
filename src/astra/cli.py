@@ -9,7 +9,16 @@ import sys
 from pathlib import Path
 
 from .agent import Agent, AgentConfig
-from .config import ConfigError, ConfigManager, ResolvedRuntimeConfig, RuntimeConfig, clone_resolved_runtime_config, resolve_runtime_config
+from .config import (
+    ConfigError,
+    ConfigManager,
+    DotenvError,
+    ResolvedRuntimeConfig,
+    RuntimeConfig,
+    clone_resolved_runtime_config,
+    merged_env,
+    resolve_runtime_config,
+)
 from .runtime import CapabilityRuntime, CommandRegistry, CommandSpec, PrefixCommandSpec
 from .session import SessionStore
 
@@ -169,23 +178,32 @@ def print_runtime_prompt(agent: Agent) -> None:
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv or sys.argv[1:])
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        raise SystemExit("OPENAI_API_KEY is required")
     cwd = Path(args.cwd).resolve()
     store = SessionStore()
     config_manager = ConfigManager()
+    runtime_env: dict[str, str] = {}
+
+    def load_env() -> dict[str, str]:
+        try:
+            return merged_env(cwd, env=os.environ)
+        except DotenvError as exc:
+            print(f"Warning: {exc}", file=sys.stderr)
+            return dict(os.environ)
 
     def load_runtime() -> ResolvedRuntimeConfig:
-        nonlocal config_manager
+        nonlocal config_manager, runtime_env
+        runtime_env = load_env()
         try:
             raw_config = config_manager.load(cwd)
         except ConfigError as exc:
             print(f"Warning: {exc}", file=sys.stderr)
             raw_config = RuntimeConfig()
-        return resolve_runtime_config(raw_config, args.model, args.base_url, args.system_prompt, env=os.environ)
+        return resolve_runtime_config(raw_config, args.model, args.base_url, args.system_prompt, env=runtime_env)
 
     runtime_config = load_runtime()
+    api_key = runtime_env.get("OPENAI_API_KEY")
+    if not api_key:
+        raise SystemExit("OPENAI_API_KEY is required")
     capability_runtime = CapabilityRuntime(cwd)
     agent = Agent(
         AgentConfig(
