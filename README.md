@@ -1,4 +1,4 @@
-﻿# Python core replica
+# Python core replica
 
 This directory contains a Python implementation of the core `pi-mono` coding-agent flow:
 
@@ -8,6 +8,7 @@ This directory contains a Python implementation of the core `pi-mono` coding-age
 - Local JSON session persistence
 - Session switching, renaming, and forking
 - Manual runtime reload via `/reload`
+- Project prompt and skill loading via the capability runtime
 - Current gap tracking in `GAP_REPORT.md`
 
 ## Requirements
@@ -44,7 +45,8 @@ Example:
 ```yaml
 model: gpt-4o-mini
 base_url: http://your-gateway/v1
-system_prompt: You are a precise coding agent.
+system_prompt: Be strict about verifying edits before writing.
+
 tools:
   enabled: [read, write, edit, bash, grep, find, ls]
   defaults:
@@ -53,7 +55,44 @@ tools:
     bash:
       timeout_seconds: 90
       max_output_bytes: 65536
+
+prompts:
+  order:
+    - builtin:base
+    - config:system
+    - prompt:repo-rules
+
+capabilities:
+  prompts:
+    paths: []
+  skills:
+    enabled: [review]
+    paths: []
 ```
+
+## Prompt and skill resources
+
+Project prompt files:
+
+- `.pyi/prompts/*.md`
+
+Project skills:
+
+- `.pyi/skills/*/skill.yaml`
+- `.pyi/skills/*/*.md`
+
+Minimal `skill.yaml` example:
+
+```yaml
+name: review
+summary: Add structured review guidance.
+prompt_files:
+  - checklist.md
+context_files:
+  - style.md
+```
+
+Only prompt and skill resources referenced by config or activated in-session are injected into the final system prompt.
 
 ## Supported commands
 
@@ -69,4 +108,5 @@ tools:
 - `/reload code`
 - `/save`
 - `/exit`
-
+- `/skill:<name>`
+- `/template:<name>`

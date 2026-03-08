@@ -212,9 +212,8 @@ def execute_tool(tool: ToolSpec, args_json: str, ctx: ToolContext) -> ToolResult
         return ToolResult(text=f"Tool failed: {exc}", is_error=True)
 
 
-def build_default_tools(config: ToolRuntimeConfig | None = None) -> dict[str, ToolSpec]:
-    effective_config = config or ToolRuntimeConfig()
-    all_tools = {
+def build_all_tools() -> dict[str, ToolSpec]:
+    return {
         "read": ToolSpec(
             name="read",
             description="Read a UTF-8 text file from the workspace.",
@@ -312,6 +311,11 @@ def build_default_tools(config: ToolRuntimeConfig | None = None) -> dict[str, To
             handler=bash_tool,
         ),
     }
+
+
+def build_default_tools(config: ToolRuntimeConfig | None = None) -> dict[str, ToolSpec]:
+    effective_config = config or ToolRuntimeConfig()
+    all_tools = build_all_tools()
     unknown_tools = [name for name in effective_config.enabled_tools if name not in all_tools]
     if unknown_tools:
         unknown = ", ".join(sorted(unknown_tools))

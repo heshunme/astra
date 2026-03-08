@@ -1,22 +1,29 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Callable
 
-from .config import ReloadResult, ResolvedRuntimeConfig, ToolRuntimeConfig, clone_tool_runtime_config
+from .config import ReloadResult, ResolvedRuntimeConfig, ToolRuntimeConfig, clone_resolved_runtime_config
 from .models import AgentRunResult, Message, ToolCall, ToolContext
 from .provider import OpenAICompatibleProvider, ProviderAborted, ProviderRequest
+from .runtime import CapabilityRuntime
 from .session import SessionStore
-from .tools import build_default_tools, execute_tool, format_tool_result
+from .tools import execute_tool, format_tool_result
 
 
 def utc_now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-EventCallback = Callable[[str, dict], None]
+EventCallback = Callable[[str, dict[str, object]], None]
+
+
+@dataclass(slots=True)
+class SessionPromptState:
+    skills: list[str] = field(default_factory=list)
+    templates: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -29,8 +36,14 @@ class AgentConfig:
 
 
 class Agent:
-    def __init__(self, config: AgentConfig, session_store: SessionStore | None = None):
+    def __init__(
+        self,
+        config: AgentConfig,
+        capability_runtime: CapabilityRuntime,
+        session_store: SessionStore | None = None,
+    ):
         self.config = config
+        self.runtime = capability_runtime
         self.provider = OpenAICompatibleProvider(config.base_url)
         self.runtime_config = ResolvedRuntimeConfig(
             model=config.model,
@@ -38,18 +51,30 @@ class Agent:
             system_prompt=config.system_prompt,
             tools=ToolRuntimeConfig(),
         )
-        self.tools = build_default_tools(self.runtime_config.tools)
+        self.tools: dict[str, object] = {}
+        self.current_system_prompt = ""
         self.session_store = session_store or SessionStore()
         self.session = self.session_store.create(str(config.cwd), config.model, config.system_prompt)
+        self._session_prompt_states: dict[str, SessionPromptState] = {self.session.id: SessionPromptState()}
         self.is_streaming = False
         self.pending_tool_calls: set[str] = set()
         self.error: str | None = None
+
+    @property
+    def active_skills(self) -> list[str]:
+        return list(self._session_prompt_state().skills)
+
+    @property
+    def active_templates(self) -> list[str]:
+        return list(self._session_prompt_state().templates)
 
     def load_session(self, session_id: str) -> None:
         self.session = self.session_store.load(session_id)
         self.config.model = self.session.model
         self.config.system_prompt = self.session.system_prompt
         self.config.cwd = Path(self.session.cwd)
+        self._ensure_session_prompt_state()
+        self._refresh_system_prompt()
 
     def save_session(self) -> None:
         self.session.model = self.config.model
@@ -58,12 +83,36 @@ class Agent:
         self.session_store.save(self.session)
 
     def fork_session(self, name: str | None = None) -> str:
+        prior_state = self._session_prompt_state()
         forked = self.session_store.fork(self.session.id, name=name)
         self.session = forked
+        self._session_prompt_states[forked.id] = SessionPromptState(
+            skills=list(prior_state.skills),
+            templates=list(prior_state.templates),
+        )
+        self._refresh_system_prompt()
         return forked.id
 
     def abort(self) -> None:
         self.provider.close_active_stream()
+
+    def activate_skill(self, name: str) -> tuple[bool, str]:
+        if not self.runtime.has_skill(name):
+            return False, f"Unknown skill: {name}"
+        prompt_state = self._session_prompt_state()
+        if name not in prompt_state.skills:
+            prompt_state.skills.append(name)
+            self._refresh_system_prompt()
+        return True, f"Activated skill: {name}"
+
+    def activate_template(self, name: str) -> tuple[bool, str]:
+        if not self.runtime.has_template(name):
+            return False, f"Unknown template: {name}"
+        prompt_state = self._session_prompt_state()
+        if name not in prompt_state.templates:
+            prompt_state.templates.append(name)
+            self._refresh_system_prompt()
+        return True, f"Activated template: {name}"
 
     def reload_runtime(self, runtime_config: ResolvedRuntimeConfig) -> ReloadResult:
         if self.is_streaming:
@@ -75,7 +124,7 @@ class Agent:
                 enabled_tools=list(self.tools),
             )
         try:
-            reloaded_tools = build_default_tools(runtime_config.tools)
+            snapshot = self.runtime.reload(runtime_config)
         except Exception as exc:
             return ReloadResult(
                 success=False,
@@ -84,17 +133,14 @@ class Agent:
                 applied_base_url=self.config.base_url,
                 enabled_tools=list(self.tools),
             )
-        self.runtime_config = ResolvedRuntimeConfig(
-            model=runtime_config.model,
-            base_url=runtime_config.base_url,
-            system_prompt=runtime_config.system_prompt,
-            tools=clone_tool_runtime_config(runtime_config.tools),
-        )
+
+        self.runtime_config = clone_resolved_runtime_config(runtime_config)
         self.config.model = self.runtime_config.model
         self.config.base_url = self.runtime_config.base_url
         self.config.system_prompt = self.runtime_config.system_prompt
         self.provider = OpenAICompatibleProvider(self.config.base_url)
-        self.tools = reloaded_tools
+        self.tools = snapshot.tools
+        self._refresh_system_prompt()
         self.save_session()
         return ReloadResult(
             success=True,
@@ -102,6 +148,9 @@ class Agent:
             applied_model=self.config.model,
             applied_base_url=self.config.base_url,
             enabled_tools=list(self.tools),
+            loaded_prompts=list(snapshot.diagnostics.loaded_prompts),
+            loaded_skills=list(snapshot.diagnostics.loaded_skills),
+            warnings=list(snapshot.diagnostics.warnings),
         )
 
     def prompt(self, text: str, on_event: EventCallback | None = None) -> AgentRunResult:
@@ -115,19 +164,34 @@ class Agent:
             raise RuntimeError("Cannot continue from assistant message")
         return self._run(on_event)
 
-    def _emit(self, on_event: EventCallback | None, event_type: str, payload: dict) -> None:
+    def _emit(self, on_event: EventCallback | None, event_type: str, payload: dict[str, object]) -> None:
         if on_event is not None:
             on_event(event_type, payload)
 
-    def _build_provider_messages(self) -> list[dict]:
-        messages: list[dict] = []
-        if self.config.system_prompt:
-            messages.append({"role": "system", "content": self.config.system_prompt})
+    def _ensure_session_prompt_state(self) -> SessionPromptState:
+        return self._session_prompt_states.setdefault(self.session.id, SessionPromptState())
+
+    def _session_prompt_state(self) -> SessionPromptState:
+        return self._ensure_session_prompt_state()
+
+    def _active_prompt_refs(self) -> list[str]:
+        prompt_state = self._session_prompt_state()
+        refs = [f"skill:{name}" for name in prompt_state.skills]
+        refs.extend(f"template:{name}" for name in prompt_state.templates)
+        return refs
+
+    def _refresh_system_prompt(self) -> None:
+        self.current_system_prompt = self.runtime.assemble_system_prompt(self.runtime_config, self._active_prompt_refs())
+
+    def _build_provider_messages(self) -> list[dict[str, object]]:
+        messages: list[dict[str, object]] = []
+        if self.current_system_prompt:
+            messages.append({"role": "system", "content": self.current_system_prompt})
         for message in self.session.messages:
             if message.role == "user":
                 messages.append({"role": "user", "content": message.content})
             elif message.role == "assistant":
-                payload: dict = {"role": "assistant", "content": message.content or None}
+                payload: dict[str, object] = {"role": "assistant", "content": message.content or None}
                 if message.tool_calls:
                     payload["tool_calls"] = [
                         {
@@ -148,7 +212,7 @@ class Agent:
                 )
         return messages
 
-    def _build_provider_tools(self) -> list[dict]:
+    def _build_provider_tools(self) -> list[dict[str, object]]:
         return [
             {
                 "type": "function",
@@ -173,7 +237,7 @@ class Agent:
     def _run(self, on_event: EventCallback | None = None) -> AgentRunResult:
         assistant_messages: list[Message] = []
         tool_results: list[Message] = []
-        usage: dict | None = None
+        usage: dict[str, object] | None = None
         self.error = None
         while True:
             request = ProviderRequest(
@@ -214,6 +278,7 @@ class Agent:
                 return AgentRunResult(assistant_messages=assistant_messages, tool_results=tool_results, usage=usage, error=self.error)
             finally:
                 self.is_streaming = False
+
             tool_calls = [
                 ToolCall(id=payload["id"], name=payload["name"], arguments=payload["arguments"])
                 for _, payload in sorted(tool_call_parts.items())
@@ -232,6 +297,7 @@ class Agent:
             if not tool_calls:
                 self.save_session()
                 return AgentRunResult(assistant_messages=assistant_messages, tool_results=tool_results, usage=usage, error=None)
+
             for tool_call in tool_calls:
                 self.pending_tool_calls.add(tool_call.id)
                 self._emit(
@@ -260,4 +326,3 @@ class Agent:
                     "tool_result",
                     {"id": tool_call.id, "name": tool_call.name, "content": rendered},
                 )
-            self.save_session()

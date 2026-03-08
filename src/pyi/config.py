@@ -1,15 +1,18 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping, cast
 
+import yaml
+
 
 DEFAULT_MODEL = "gpt-5.2"
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_SYSTEM_PROMPT = "You are a coding agent. Be concise, verify facts from files and use tools when needed."
 DEFAULT_ENABLED_TOOLS = ("read", "write", "edit", "ls", "find", "grep", "bash")
+DEFAULT_PROMPT_ORDER = ("builtin:base", "config:system")
 DEFAULT_READ_MAX_LINES = 400
 DEFAULT_BASH_TIMEOUT_SECONDS = 60
 DEFAULT_BASH_MAX_OUTPUT_BYTES = 32 * 1024
@@ -28,11 +31,35 @@ class ToolRuntimeConfig:
 
 
 @dataclass(slots=True)
+class PromptRuntimeConfig:
+    order: list[str] = field(default_factory=lambda: list(DEFAULT_PROMPT_ORDER))
+
+
+@dataclass(slots=True)
+class PromptCapabilityConfig:
+    paths: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class SkillCapabilityConfig:
+    paths: list[str] = field(default_factory=list)
+    enabled: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class CapabilitiesConfig:
+    prompts: PromptCapabilityConfig = field(default_factory=PromptCapabilityConfig)
+    skills: SkillCapabilityConfig = field(default_factory=SkillCapabilityConfig)
+
+
+@dataclass(slots=True)
 class RuntimeConfig:
     model: str | None = None
     base_url: str | None = None
     system_prompt: str | None = None
     tools: ToolRuntimeConfig = field(default_factory=ToolRuntimeConfig)
+    prompts: PromptRuntimeConfig = field(default_factory=PromptRuntimeConfig)
+    capabilities: CapabilitiesConfig = field(default_factory=CapabilitiesConfig)
 
 
 @dataclass(slots=True)
@@ -41,6 +68,8 @@ class ResolvedRuntimeConfig:
     base_url: str
     system_prompt: str
     tools: ToolRuntimeConfig = field(default_factory=ToolRuntimeConfig)
+    prompts: PromptRuntimeConfig = field(default_factory=PromptRuntimeConfig)
+    capabilities: CapabilitiesConfig = field(default_factory=CapabilitiesConfig)
 
 
 @dataclass(slots=True)
@@ -50,6 +79,9 @@ class ReloadResult:
     applied_model: str
     applied_base_url: str
     enabled_tools: list[str]
+    loaded_prompts: list[str] = field(default_factory=list)
+    loaded_skills: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
 
 def clone_tool_runtime_config(config: ToolRuntimeConfig) -> ToolRuntimeConfig:
@@ -58,6 +90,28 @@ def clone_tool_runtime_config(config: ToolRuntimeConfig) -> ToolRuntimeConfig:
         read_max_lines=config.read_max_lines,
         bash_timeout_seconds=config.bash_timeout_seconds,
         bash_max_output_bytes=config.bash_max_output_bytes,
+    )
+
+
+def clone_prompt_runtime_config(config: PromptRuntimeConfig) -> PromptRuntimeConfig:
+    return PromptRuntimeConfig(order=list(config.order))
+
+
+def clone_capabilities_config(config: CapabilitiesConfig) -> CapabilitiesConfig:
+    return CapabilitiesConfig(
+        prompts=PromptCapabilityConfig(paths=list(config.prompts.paths)),
+        skills=SkillCapabilityConfig(paths=list(config.skills.paths), enabled=list(config.skills.enabled)),
+    )
+
+
+def clone_resolved_runtime_config(config: ResolvedRuntimeConfig) -> ResolvedRuntimeConfig:
+    return ResolvedRuntimeConfig(
+        model=config.model,
+        base_url=config.base_url,
+        system_prompt=config.system_prompt,
+        tools=clone_tool_runtime_config(config.tools),
+        prompts=clone_prompt_runtime_config(config.prompts),
+        capabilities=clone_capabilities_config(config.capabilities),
     )
 
 
@@ -71,12 +125,14 @@ def resolve_runtime_config(
     env_map = env or os.environ
     model = cli_model or config.model or env_map.get("OPENAI_MODEL") or DEFAULT_MODEL
     base_url = cli_base_url or config.base_url or env_map.get("OPENAI_BASE_URL") or DEFAULT_BASE_URL
-    system_prompt = cli_system_prompt or config.system_prompt or DEFAULT_SYSTEM_PROMPT
+    system_prompt = cli_system_prompt or config.system_prompt or ""
     return ResolvedRuntimeConfig(
         model=model,
         base_url=base_url,
         system_prompt=system_prompt,
         tools=clone_tool_runtime_config(config.tools),
+        prompts=clone_prompt_runtime_config(config.prompts),
+        capabilities=clone_capabilities_config(config.capabilities),
     )
 
 
@@ -97,10 +153,6 @@ class ConfigManager:
     def _read_yaml(self, path: Path) -> dict[str, object]:
         if not path.exists():
             return {}
-        try:
-            import yaml  # type: ignore[import-not-found]
-        except ImportError as exc:
-            raise ConfigError(f"PyYAML is required to read config file: {path}") from exc
         loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
         if loaded is None:
             return {}
@@ -123,14 +175,15 @@ class ConfigManager:
         base_url = self._optional_string(raw.get("base_url"), "base_url")
         system_prompt = self._optional_string(raw.get("system_prompt"), "system_prompt")
         tools = ToolRuntimeConfig()
+        prompts = PromptRuntimeConfig()
+        capabilities = CapabilitiesConfig()
 
         tools_raw = raw.get("tools")
         if tools_raw is not None:
             tools_map = self._mapping(tools_raw, "tools")
             enabled_raw = tools_map.get("enabled")
             if enabled_raw is not None:
-                enabled_list = self._string_list(enabled_raw, "tools.enabled")
-                tools.enabled_tools = enabled_list
+                tools.enabled_tools = self._string_list(enabled_raw, "tools.enabled")
 
             defaults_raw = tools_map.get("defaults")
             if defaults_raw is not None:
@@ -159,7 +212,42 @@ class ConfigManager:
                             "tools.defaults.bash.max_output_bytes",
                         )
 
-        return RuntimeConfig(model=model, base_url=base_url, system_prompt=system_prompt, tools=tools)
+        prompts_raw = raw.get("prompts")
+        if prompts_raw is not None:
+            prompts_map = self._mapping(prompts_raw, "prompts")
+            order_raw = prompts_map.get("order")
+            if order_raw is not None:
+                prompts.order = self._string_list(order_raw, "prompts.order")
+
+        capabilities_raw = raw.get("capabilities")
+        if capabilities_raw is not None:
+            capabilities_map = self._mapping(capabilities_raw, "capabilities")
+
+            prompts_cap_raw = capabilities_map.get("prompts")
+            if prompts_cap_raw is not None:
+                prompts_cap_map = self._mapping(prompts_cap_raw, "capabilities.prompts")
+                paths_raw = prompts_cap_map.get("paths")
+                if paths_raw is not None:
+                    capabilities.prompts.paths = self._string_list(paths_raw, "capabilities.prompts.paths")
+
+            skills_cap_raw = capabilities_map.get("skills")
+            if skills_cap_raw is not None:
+                skills_cap_map = self._mapping(skills_cap_raw, "capabilities.skills")
+                paths_raw = skills_cap_map.get("paths")
+                enabled_raw = skills_cap_map.get("enabled")
+                if paths_raw is not None:
+                    capabilities.skills.paths = self._string_list(paths_raw, "capabilities.skills.paths")
+                if enabled_raw is not None:
+                    capabilities.skills.enabled = self._string_list(enabled_raw, "capabilities.skills.enabled")
+
+        return RuntimeConfig(
+            model=model,
+            base_url=base_url,
+            system_prompt=system_prompt,
+            tools=tools,
+            prompts=prompts,
+            capabilities=capabilities,
+        )
 
     def _mapping(self, value: object, label: str) -> dict[str, object]:
         if not isinstance(value, dict):
