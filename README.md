@@ -157,6 +157,10 @@ Use `/runtime json prompt` for a machine-readable version of the same inspection
 
 ## Testing
 
+Detailed Chinese validation guide:
+
+- `TESTING.zh-CN.md`
+
 Install test dependencies:
 
 ```powershell
