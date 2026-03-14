@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 
-pytestmark = [pytest.mark.integration, pytest.mark.slow]
+pytestmark = [pytest.mark.integration]
 
 
 def test_cli_smoke_runtime_prompt_json_subprocess(tmp_path: Path) -> None:

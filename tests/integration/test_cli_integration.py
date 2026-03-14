@@ -71,6 +71,20 @@ def test_runtime_json_prompt_command(capsys: pytest.CaptureFixture[str], monkeyp
     assert _saved_session_files(tmp_path) == []
 
 
+def test_help_includes_extension_commands(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+
+    monkeypatch.setattr(builtins, "input", InputFeeder(["/help", "/exit"]))
+    cli.main(["--cwd", str(cwd)])
+
+    out = capsys.readouterr().out
+    assert "/skill:<name> [request]" in out
+    assert "/template:<name>" in out
+
+
 def test_model_and_base_url_commands(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     cwd = tmp_path / "workspace"
     cwd.mkdir()
@@ -93,6 +107,32 @@ def test_model_and_base_url_commands(capsys: pytest.CaptureFixture[str], monkeyp
     assert "model=custom-model" not in out
     assert "base_url=http://gateway/v1" not in out
     assert _saved_session_files(tmp_path) == []
+
+
+def test_restored_session_preserves_session_base_url(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+
+    def fake_stream_chat(self, _request):
+        yield ProviderEvent(type="text_delta", delta="ok")
+        yield ProviderEvent(type="done")
+
+    monkeypatch.setattr(OpenAICompatibleProvider, "stream_chat", fake_stream_chat)
+    monkeypatch.setattr(
+        builtins,
+        "input",
+        InputFeeder(["/base-url http://custom-gateway/v1", "hello", "/exit"]),
+    )
+    cli.main(["--cwd", str(cwd)])
+
+    saved_session = json.loads(_saved_session_files(tmp_path)[0].read_text(encoding="utf-8"))
+    monkeypatch.setattr(builtins, "input", InputFeeder(["/base-url", "/exit"]))
+    cli.main(["--cwd", str(cwd), "--session", saved_session["id"]])
+
+    out = capsys.readouterr().out
+    assert "http://custom-gateway/v1" in out
 
 
 def test_switch_command(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -235,6 +275,23 @@ def test_plain_message_creates_session(
     assert data["name"] == "hello"
 
 
+def test_non_interactive_prompt_exits_non_zero_on_provider_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+
+    def failing_stream_chat(self, _request):
+        raise RuntimeError("provider failed")
+
+    monkeypatch.setattr(OpenAICompatibleProvider, "stream_chat", failing_stream_chat)
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main(["--cwd", str(cwd), "hello"])
+
+    assert excinfo.value.code == 1
+
+
 def test_sessions_command_shows_first_prompt_as_default_name(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -344,6 +401,34 @@ def test_bare_skill_command_arms_next_prompt_once(
     assert "skills.pending=(none)" in out
     assert len(requests) == 1
     assert "Please use the skill 'debug' for this turn only." in str(requests[0].messages[1]["content"])
+
+
+def test_extension_command_does_not_claim_default_session_name(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+    _write_skill(cwd, "debug", summary="Debug checklist")
+
+    def fake_stream_chat(self, _request):
+        yield ProviderEvent(type="text_delta", delta="ok")
+        yield ProviderEvent(type="done")
+
+    monkeypatch.setattr(OpenAICompatibleProvider, "stream_chat", fake_stream_chat)
+    monkeypatch.setattr(
+        builtins,
+        "input",
+        InputFeeder(["/skill:debug", "Investigate the failing tests.", "/exit"]),
+    )
+
+    cli.main(["--cwd", str(cwd)])
+
+    out = capsys.readouterr().out
+    assert "Next message will use skill: debug" in out
+    saved_sessions = _saved_session_files(tmp_path)
+    assert len(saved_sessions) == 1
+    data = json.loads(saved_sessions[0].read_text(encoding="utf-8"))
+    assert data["name"] == "Investigate the failing tests."
 
 
 def test_runtime_prompt_shows_skill_catalog_without_loading_skill_body(

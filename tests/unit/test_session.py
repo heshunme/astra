@@ -5,7 +5,16 @@ from pathlib import Path
 
 import pytest
 
-from astra.models import Message, SkillCatalogEntry, ToolCall
+from astra.config import ResolvedRuntimeConfig
+from astra.models import (
+    AgentConversationState,
+    AgentRuntimeState,
+    AgentSnapshot,
+    Message,
+    PendingSkillTriggerState,
+    SkillCatalogEntry,
+    ToolCall,
+)
 from astra.session import SessionStore
 
 
@@ -72,3 +81,31 @@ def test_session_list_returns_latest_first(tmp_path: Path) -> None:
 
     assert summaries[0].id == second.id
     assert summaries[1].id == first.id
+
+
+def test_session_load_preserves_agent_snapshot(tmp_path: Path) -> None:
+    store = SessionStore(base_dir=tmp_path)
+    session = store.create(cwd="/repo", model="gpt-test", system_prompt="sys", name="demo")
+    session.agent_snapshot = AgentSnapshot(
+        conversation=AgentConversationState(messages=[Message(role="user", content="hello")]),
+        runtime=AgentRuntimeState(
+            cwd="/repo",
+            runtime_config=ResolvedRuntimeConfig(
+                model="gpt-test",
+                base_url="http://gateway/v1",
+                system_prompt="sys",
+            ),
+            skill_catalog_snapshot=[],
+            templates=["repo-rules"],
+            pending_skill_trigger=PendingSkillTriggerState(name="review", raw_command="/skill:review"),
+        ),
+    )
+
+    store.save(session)
+    loaded = store.load(session.id)
+
+    assert loaded.agent_snapshot is not None
+    assert loaded.agent_snapshot.runtime.runtime_config.base_url == "http://gateway/v1"
+    assert loaded.agent_snapshot.runtime.templates == ["repo-rules"]
+    assert loaded.agent_snapshot.runtime.pending_skill_trigger is not None
+    assert loaded.agent_snapshot.runtime.pending_skill_trigger.name == "review"

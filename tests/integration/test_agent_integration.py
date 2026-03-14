@@ -6,9 +6,8 @@ import pytest
 
 from astra.agent import Agent, AgentConfig
 from astra.config import ToolRuntimeConfig
-from astra.models import ProviderEvent
+from astra.models import AgentEvent, Message, ProviderEvent
 from astra.runtime import CapabilityRuntime
-from astra.session import SessionStore
 
 
 pytestmark = pytest.mark.integration
@@ -44,7 +43,7 @@ class RecordingProvider:
             yield event
 
 
-def _build_agent(cwd: Path, runtime_config, store_dir: Path) -> Agent:
+def _build_agent(cwd: Path, runtime_config) -> Agent:
     runtime = CapabilityRuntime(cwd)
     agent = Agent(
         AgentConfig(
@@ -55,112 +54,37 @@ def _build_agent(cwd: Path, runtime_config, store_dir: Path) -> Agent:
             system_prompt=runtime_config.system_prompt,
         ),
         capability_runtime=runtime,
-        session_store=SessionStore(base_dir=store_dir),
     )
-    reload_result = agent.reload_runtime(runtime_config)
+    reload_result = agent.apply_runtime_config(runtime_config)
     assert reload_result.success
     return agent
 
 
-def test_agent_does_not_persist_new_session_until_first_prompt(tmp_path: Path, runtime_config_factory) -> None:
+def test_agent_event_stream_wraps_single_prompt(tmp_path: Path, runtime_config_factory) -> None:
     cwd = tmp_path / "workspace"
     cwd.mkdir()
-    store_dir = tmp_path / "sessions"
-    runtime_config = runtime_config_factory()
-
-    agent = Agent(
-        AgentConfig(
-            model=runtime_config.model,
-            api_key="test-key",
-            base_url=runtime_config.base_url,
-            cwd=cwd,
-            system_prompt=runtime_config.system_prompt,
-        ),
-        capability_runtime=CapabilityRuntime(cwd),
-        session_store=SessionStore(base_dir=store_dir),
-    )
-
-    reload_result = agent.reload_runtime(runtime_config)
-    assert reload_result.success
-    assert list(store_dir.glob("*.json")) == []
-
-    agent.provider = FakeProvider([[ProviderEvent(type="text_delta", delta="ok"), ProviderEvent(type="done")]])
-    result = agent.prompt("hello")
-
-    assert result.error is None
-    saved_sessions = list(store_dir.glob("*.json"))
-    assert len(saved_sessions) == 1
-    loaded = SessionStore(base_dir=store_dir).load(agent.session.id)
-    assert loaded.name == "hello"
-    assert loaded.messages[0].role == "user"
-    assert loaded.messages[0].content == "hello"
-
-
-def test_agent_persists_first_user_message_even_if_provider_fails(tmp_path: Path, runtime_config_factory) -> None:
-    cwd = tmp_path / "workspace"
-    cwd.mkdir()
-    store_dir = tmp_path / "sessions"
-    runtime_config = runtime_config_factory()
-
-    class FailingProvider:
-        def close_active_stream(self) -> None:
-            return None
-
-        def stream_chat(self, _request):
-            raise RuntimeError("provider failed")
-
-    agent = Agent(
-        AgentConfig(
-            model=runtime_config.model,
-            api_key="test-key",
-            base_url=runtime_config.base_url,
-            cwd=cwd,
-            system_prompt=runtime_config.system_prompt,
-        ),
-        capability_runtime=CapabilityRuntime(cwd),
-        session_store=SessionStore(base_dir=store_dir),
-    )
-    reload_result = agent.reload_runtime(runtime_config)
-    assert reload_result.success
-    agent.provider = FailingProvider()
-
-    result = agent.prompt("hello")
-
-    assert result.error == "provider failed"
-    loaded = SessionStore(base_dir=store_dir).load(agent.session.id)
-    assert loaded.name == "hello"
-    assert loaded.messages[0].role == "user"
-    assert loaded.messages[0].content == "hello"
-
-
-def test_agent_preserves_existing_session_name_on_first_prompt(tmp_path: Path, runtime_config_factory) -> None:
-    cwd = tmp_path / "workspace"
-    cwd.mkdir()
-    store_dir = tmp_path / "sessions"
-    runtime_config = runtime_config_factory()
-
-    agent = Agent(
-        AgentConfig(
-            model=runtime_config.model,
-            api_key="test-key",
-            base_url=runtime_config.base_url,
-            cwd=cwd,
-            system_prompt=runtime_config.system_prompt,
-        ),
-        capability_runtime=CapabilityRuntime(cwd),
-        session_store=SessionStore(base_dir=store_dir),
-    )
-    reload_result = agent.reload_runtime(runtime_config)
-    assert reload_result.success
-    agent.session.name = "preset"
+    agent = _build_agent(cwd, runtime_config_factory())
     agent.provider = FakeProvider([[ProviderEvent(type="text_delta", delta="ok"), ProviderEvent(type="done")]])
 
-    result = agent.prompt("hello")
+    events: list[AgentEvent] = []
+    unsubscribe = agent.subscribe(events.append)
+    try:
+        result = agent.prompt("hello")
+    finally:
+        unsubscribe()
 
     assert result.error is None
-    loaded = SessionStore(base_dir=store_dir).load(agent.session.id)
-    assert loaded.name == "preset"
-    assert loaded.messages[0].content == "hello"
+    assert [event.type for event in events] == [
+        "agent_start",
+        "turn_start",
+        "message_start",
+        "message_update",
+        "message_end",
+        "turn_end",
+        "agent_end",
+    ]
+    assert agent.messages[0].role == "user"
+    assert agent.messages[0].content == "hello"
 
 
 def test_agent_tool_call_round_trip(tmp_path: Path, runtime_config_factory) -> None:
@@ -168,8 +92,7 @@ def test_agent_tool_call_round_trip(tmp_path: Path, runtime_config_factory) -> N
     cwd.mkdir()
     (cwd / "note.txt").write_text("hello from file\n", encoding="utf-8")
 
-    runtime_config = runtime_config_factory()
-    agent = _build_agent(cwd, runtime_config, tmp_path / "sessions")
+    agent = _build_agent(cwd, runtime_config_factory())
     agent.provider = FakeProvider(
         [
             [
@@ -200,11 +123,10 @@ def test_agent_tool_call_round_trip(tmp_path: Path, runtime_config_factory) -> N
 def test_agent_reload_blocked_while_streaming(tmp_path: Path, runtime_config_factory) -> None:
     cwd = tmp_path / "workspace"
     cwd.mkdir()
-    runtime_config = runtime_config_factory()
-    agent = _build_agent(cwd, runtime_config, tmp_path / "sessions")
+    agent = _build_agent(cwd, runtime_config_factory())
 
     agent.is_streaming = True
-    result = agent.reload_runtime(runtime_config)
+    result = agent.apply_runtime_config(runtime_config_factory())
 
     assert not result.success
     assert "Cannot reload while a response is streaming" in result.message
@@ -213,8 +135,7 @@ def test_agent_reload_blocked_while_streaming(tmp_path: Path, runtime_config_fac
 def test_agent_abort_delegates_to_provider(tmp_path: Path, runtime_config_factory) -> None:
     cwd = tmp_path / "workspace"
     cwd.mkdir()
-    runtime_config = runtime_config_factory()
-    agent = _build_agent(cwd, runtime_config, tmp_path / "sessions")
+    agent = _build_agent(cwd, runtime_config_factory())
 
     fake_provider = FakeProvider([[ProviderEvent(type="done")]])
     agent.provider = fake_provider
@@ -224,7 +145,15 @@ def test_agent_abort_delegates_to_provider(tmp_path: Path, runtime_config_factor
     assert fake_provider.closed
 
 
-def test_agent_inline_skill_prompt_is_rewritten_and_persisted(tmp_path: Path, runtime_config_factory) -> None:
+def test_agent_wait_for_idle_returns_immediately_when_not_streaming(tmp_path: Path, runtime_config_factory) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+    agent = _build_agent(cwd, runtime_config_factory())
+
+    assert agent.wait_for_idle(timeout=0.01)
+
+
+def test_agent_inline_skill_command_runs_through_core_extension_handler(tmp_path: Path, runtime_config_factory) -> None:
     cwd = tmp_path / "workspace"
     skill_dir = cwd / ".astra" / "skills" / "review"
     skill_dir.mkdir(parents=True)
@@ -240,16 +169,15 @@ prompt_files:
     )
     (skill_dir / "checklist.md").write_text("Review checklist prompt body.", encoding="utf-8")
 
-    agent = _build_agent(cwd, runtime_config_factory(), tmp_path / "sessions")
+    agent = _build_agent(cwd, runtime_config_factory())
     provider = RecordingProvider([ProviderEvent(type="text_delta", delta="done"), ProviderEvent(type="done")])
     agent.provider = provider
 
-    success, rewritten, metadata = agent.build_skill_prompt("review", "Review src/demo.py for issues.", "/skill:review Review src/demo.py for issues.")
-    assert success
+    result = agent.try_handle_extension_command("/skill:review Review src/demo.py for issues.")
 
-    result = agent.prompt(rewritten, metadata=metadata)
-
-    assert result.error is None
+    assert result is not None
+    assert result.run_result is not None
+    assert result.run_result.error is None
     assert provider.requests
     sent_messages = provider.requests[0].messages
     assert sent_messages[0]["role"] == "system"
@@ -257,10 +185,7 @@ prompt_files:
     assert "Review checklist" in str(sent_messages[0]["content"])
     assert sent_messages[1]["role"] == "user"
     assert "Please use the skill 'review' for this turn only." in str(sent_messages[1]["content"])
-    assert "Original user request:" in str(sent_messages[1]["content"])
-    loaded = SessionStore(base_dir=tmp_path / "sessions").load(agent.session.id)
-    assert loaded.messages[0].content == rewritten
-    assert loaded.messages[0].metadata["raw_user_input"] == "/skill:review Review src/demo.py for issues."
+    assert agent.messages[0].metadata["raw_user_input"] == "/skill:review Review src/demo.py for issues."
 
 
 def test_agent_pending_skill_consumes_next_prompt_once(tmp_path: Path, runtime_config_factory) -> None:
@@ -278,11 +203,11 @@ prompt_files:
     )
     (skill_dir / "checklist.md").write_text("Debug checklist prompt body.", encoding="utf-8")
 
-    agent = _build_agent(cwd, runtime_config_factory(), tmp_path / "sessions")
+    agent = _build_agent(cwd, runtime_config_factory())
 
-    success, message = agent.arm_skill("debug", "/skill:debug")
-    assert success
-    assert "Next message will use skill" in message
+    armed = agent.try_handle_extension_command("/skill:debug")
+    assert armed is not None
+    assert armed.message == "Next message will use skill: debug"
     assert agent.pending_skill_name == "debug"
 
     consumed, rewritten, metadata = agent.consume_pending_skill_prompt("Investigate why tests fail.")
@@ -295,6 +220,39 @@ prompt_files:
     assert consumed_again
     assert plain_text == "A plain follow-up."
     assert plain_metadata is None
+
+
+def test_agent_snapshot_restore_round_trip_preserves_runtime_state(tmp_path: Path, runtime_config_factory) -> None:
+    cwd = tmp_path / "workspace"
+    prompt_dir = cwd / ".astra" / "prompts"
+    skill_dir = cwd / ".astra" / "skills" / "review"
+    prompt_dir.mkdir(parents=True)
+    skill_dir.mkdir(parents=True)
+    (prompt_dir / "repo-rules.md").write_text("Use the repo rules.", encoding="utf-8")
+    (skill_dir / "skill.yaml").write_text(
+        """
+name: review
+summary: Review checklist
+prompt_files:
+  - checklist.md
+""".strip(),
+        encoding="utf-8",
+    )
+    (skill_dir / "checklist.md").write_text("Review checklist prompt body.", encoding="utf-8")
+
+    agent = _build_agent(cwd, runtime_config_factory())
+    agent.replace_messages([Message(role="user", content="hello")])
+    agent.activate_template("repo-rules")
+    agent.arm_skill("review", "/skill:review")
+
+    snapshot = agent.snapshot()
+    restored = _build_agent(cwd, runtime_config_factory())
+    restored.restore(snapshot)
+
+    assert restored.messages[0].content == "hello"
+    assert restored.active_templates == ["repo-rules"]
+    assert restored.pending_skill_name == "review"
+    assert restored.runtime_config.model == agent.runtime_config.model
 
 
 def test_agent_marks_removed_skills_as_history_only_after_reload(tmp_path: Path, runtime_config_factory) -> None:
@@ -312,14 +270,14 @@ prompt_files:
     )
     (skill_dir / "checklist.md").write_text("Review checklist prompt body.", encoding="utf-8")
 
-    agent = _build_agent(cwd, runtime_config_factory(), tmp_path / "sessions")
+    agent = _build_agent(cwd, runtime_config_factory())
     assert agent.available_skill_names() == ["review"]
 
     (skill_dir / "skill.yaml").unlink()
     (skill_dir / "checklist.md").unlink()
     skill_dir.rmdir()
 
-    result = agent.reload_runtime(runtime_config_factory())
+    result = agent.apply_runtime_config(runtime_config_factory())
 
     assert result.success
     assert agent.available_skill_names() == []
@@ -350,7 +308,6 @@ prompt_files:
         runtime_config_factory(
             tools=ToolRuntimeConfig(enabled_tools=["write", "edit", "ls", "find", "grep", "bash"])
         ),
-        tmp_path / "sessions",
     )
 
     assert "Skill catalog for this session" not in agent.current_system_prompt
