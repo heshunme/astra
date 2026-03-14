@@ -193,6 +193,22 @@ For `--live-provider` / `--real`, the script will first use the current shell en
 bash scripts/smoke_cli.sh --real --env-file /path/to/.env
 ```
 
+Manual CLI sandbox for hands-on testing:
+
+```bash
+.venv/bin/python scripts/manual_cli.py
+```
+
+This prepares a temporary workspace with:
+
+- `.astra/config.yaml`
+- prompt templates under `.astra/prompts`
+- sample skills under `.astra/skills`
+- sample files for `read`, `edit`, `find`, `grep`, `ls`, and `bash`
+- a workspace `.env` symlink or copy sourced from the repository `.env`
+
+It then launches `python -m astra --cwd <temp-workspace>` so you can manually test the CLI against a disposable project. Use `--no-launch` to only prepare the workspace, or `--cleanup` to remove it after the session exits successfully.
+
 Extended validation (recommended for nightly runs):
 
 ```powershell
