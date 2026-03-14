@@ -85,12 +85,14 @@ These instructions apply to the entire repository tree.
   - `.venv\Scripts\python.exe -m astra --help`
   - Use a local `python -c` smoke check for config/runtime assembly when network access is not needed.
   - For command-path changes, pipe commands into `astra` with a fake `OPENAI_API_KEY` when the flow does not need a real provider call.
+  - When piping commands into `astra`, ensure temporary environment overrides such as `HOME` and `OPENAI_API_KEY` apply to the `python -m astra` process, not only to the producer command at the left side of the pipe; prefer exporting them in the same shell before running the pipeline.
   - For prompt-assembly changes, also smoke-check `/runtime prompt` and `/runtime json prompt`.
 - Common mistakes to avoid:
   - Forgetting to carry new runtime fields through clone/reload paths.
   - Making newly discovered resources auto-activate by accident.
   - Changing prompt assembly without updating reload summaries and operator-facing inspection output.
   - Validating only imports instead of validating the actual CLI command path.
+  - Setting `HOME=/tmp/...` or fake keys only on `printf` or another pipeline producer, which leaves `astra` writing to the default session directory.
   - Building a second prompt-inspection code path in CLI instead of reusing the same runtime/agent assembly logic.
 
 ## Documentation

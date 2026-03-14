@@ -6,6 +6,7 @@ import json
 import os
 import signal
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
@@ -55,15 +56,69 @@ def stream_callback(event_type: str, payload: dict[str, object]) -> None:
         print(f"\n[tool-result:{name}]", flush=True)
 
 
-def print_sessions(store: SessionStore) -> None:
+def _truncate(value: str, width: int) -> str:
+    if len(value) <= width:
+        return value
+    if width <= 3:
+        return value[:width]
+    return f"{value[: width - 3]}..."
+
+
+def _display_path(raw_path: str) -> str:
+    try:
+        path = Path(raw_path).resolve()
+        home = Path.home().resolve()
+        try:
+            relative = path.relative_to(home)
+        except ValueError:
+            return str(path)
+        return "~" if not relative.parts else f"~/{relative.as_posix()}"
+    except OSError:
+        return raw_path
+
+
+def _display_timestamp(value: str) -> str:
+    if not value:
+        return "-"
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return value
+    return parsed.strftime("%Y-%m-%d %H:%MZ")
+
+
+def print_sessions(store: SessionStore, current_session_id: str | None = None) -> None:
     sessions = store.list()
     if not sessions:
         print("No sessions")
         return
+
+    headers = ("CUR", "ID", "NAME", "UPDATED", "CWD", "PARENT")
+    rows: list[tuple[str, str, str, str, str, str]] = []
     for session in sessions:
-        name = session.name or "(unnamed)"
-        parent = f" parent={session.parent_session_id}" if session.parent_session_id else ""
-        print(f"{session.id}  {name}  cwd={session.cwd}{parent}  updated={session.updated_at}")
+        rows.append(
+            (
+                "*" if session.id == current_session_id else " ",
+                _truncate(session.id, 12),
+                _truncate(session.name or "(unnamed)", 24),
+                _display_timestamp(session.updated_at),
+                _truncate(_display_path(session.cwd), 36),
+                _truncate(session.parent_session_id or "-", 12),
+            )
+        )
+
+    widths = [len(header) for header in headers]
+    for row in rows:
+        for index, value in enumerate(row):
+            widths[index] = max(widths[index], len(value))
+
+    print("Sessions")
+    print("  ".join(header.ljust(widths[index]) for index, header in enumerate(headers)))
+    print("  ".join("-" * widths[index] for index in range(len(headers))))
+    for row in rows:
+        print("  ".join(value.ljust(widths[index]) for index, value in enumerate(row)))
+    if current_session_id:
+        print("* current session")
 
 
 def print_reload_summary(agent: Agent, message: str, warnings: list[str] | None = None) -> None:
@@ -446,7 +501,7 @@ def main(
             return True
 
         def sessions_command(_line: str) -> bool:
-            print_sessions(store)
+            print_sessions(store, current_session_id=agent.session.id)
             return True
 
         def switch_command(line: str) -> bool:
