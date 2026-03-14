@@ -4,36 +4,37 @@ These instructions apply to the entire repository tree.
 
 ## Purpose
 - This package is a Python replica of the core `pi-mono` coding-agent flow.
-- Keep the scope focused on: CLI, session persistence, tool calling, runtime reload, and OpenAI-compatible provider support.
-- Do not add TUI, RPC, extension ecosystems, or unrelated monorepo concepts unless explicitly requested.
+- Keep scope focused on: CLI, session persistence, tool-calling loop, runtime reload, and OpenAI-compatible provider behavior.
+- Do not add TUI or unrelated monorepo concepts unless explicitly requested.
 
 ## Environment
 - Use `uv` for local environment management.
 - Preferred setup:
   - `uv venv .venv`
-  - `. .venv/Scripts/activate`
+  - `. .venv/bin/activate` (Linux/macOS) or `. .venv/Scripts/activate` (PowerShell-compatible docs may still use `Scripts`)
   - `uv pip install -e .`
-- You may create and maintain the local `.venv` for this package.
 - Do not edit files inside `.venv` directly.
 
 ## Commands
-- Syntax check / smoke validation:
+- Syntax/smoke validation:
   - `uv run python -m compileall src`
   - `uv run python -m astra --help`
 - Package install/update:
   - `uv pip install -e .`
+- Optional local smoke:
+  - `bash scripts/smoke_cli.sh`
 - Do not run repo-level `npm` commands for work limited to this package unless explicitly asked.
 
 ## Configuration
 - Reloadable config files:
   - Global: `~/.astra-python/config.yaml`
   - Project: `.astra/config.yaml`
-- Precedence:
-  - CLI args override YAML
-  - Project YAML overrides global YAML
-  - Environment variables fill gaps
-  - Built-in defaults are last fallback
-- Supported runtime settings currently include:
+- Resolution precedence:
+  - CLI args override YAML.
+  - Project YAML overrides global YAML.
+  - Environment variables fill remaining gaps.
+  - Built-in defaults are final fallback.
+- Runtime keys supported by code today:
   - `model`
   - `base_url`
   - `system_prompt`
@@ -41,64 +42,64 @@ These instructions apply to the entire repository tree.
   - `tools.defaults.read.max_lines`
   - `tools.defaults.bash.timeout_seconds`
   - `tools.defaults.bash.max_output_bytes`
+  - `prompts.order`
+  - `capabilities.prompts.paths`
+  - `capabilities.skills.paths`
+- `capabilities.skills.enabled` is removed and must not be reintroduced.
 
 ## Runtime behavior
-- `/reload` is the stable manual reload path.
-- `/reload code` is best-effort only; do not treat it as a guaranteed hot-swap system.
-- `--base-url`, YAML `base_url`, and `/base-url` must stay aligned.
-- Preserve session history across runtime reloads.
+- `/reload` is the stable runtime reload path.
+- `/reload code` is best-effort developer convenience only.
 - Do not reload while a response is streaming.
+- Keep `--base-url`, YAML `base_url`, and `/base-url` behavior aligned.
+- Session history must persist across runtime reloads and session switching.
+- A new session is materialized/saved only after a normal user prompt, not by slash commands alone.
+- Prompt assembly must match the exact prompt sent to provider: default refs + discovered fragments + session skill catalog + active templates.
+
+## Skill/Template behavior
+- Discovered skills are inert until explicitly used via `/skill:<name> ...` or armed for next turn with `/skill:<name>`.
+- `/skill:<name>` applies to one turn only; do not introduce permanent skill mode toggles.
+- Skill metadata can be retained in session history, but raw skill files stay on disk and are read on demand via `read` tool.
+- `/template:<name>` activates a discovered prompt fragment for the current process session state.
+- Fail soft on malformed skill YAML or missing files and surface warnings through runtime diagnostics.
 
 ## Implementation rules
 - Prefer standard library modules unless a dependency is clearly justified.
-- Keep provider integration OpenAI-compatible unless the task explicitly asks for another provider.
+- Keep provider integration OpenAI-compatible unless explicitly asked otherwise.
 - Keep tools workspace-scoped; never weaken path-safety checks.
-- Avoid adding broad abstractions before they are needed.
-- Keep CLI behavior simple and explicit.
+- Keep CLI behavior explicit and minimal.
+- Prefer command registries and focused handlers over growing `if/elif` command trees.
+- Keep runtime state layers explicit: persisted config, process runtime config, session-scoped temporary state.
 
 ## Validation expectations
-- For code changes, run at least targeted Python validation relevant to the change.
-- Prefer small smoke tests over heavyweight test scaffolding unless tests are explicitly requested.
-- If you add config behavior, validate both merge precedence and runtime reload.
-- If you add CLI behavior, validate the actual command path, not just library calls.
-
-## Working Notes
-- Read every target file in full before editing; when several files are coupled, read them as one batch first.
-- Prefer replacing long `if/elif` command trees with registries and small handlers before adding new commands.
-- When introducing runtime state, separate three layers clearly: persisted config, process runtime state, and session-scoped temporary state.
-- Do not silently turn discovery into activation: discovered prompt/skill resources should remain inert until config or command flow enables them.
-- Keep `system_prompt` migration incremental: preserve the old input surface, then route it through the new assembler.
-- For skill resources, fail soft on malformed YAML or missing files and surface warnings through reload/runtime inspection.
-- Before broad refactors, add one small reusable seam first, such as `build_all_tools()` before moving tool selection into a registry.
-- Avoid using `/reload code` as the primary development contract; stable behavior should work through `/reload`.
-- When changing prompt assembly, keep `/runtime prompt` and `/runtime json prompt` aligned with the exact prompt that the agent will send.
+- For code changes, run at least targeted validation relevant to the change.
+- Prefer small smoke checks over heavy scaffolding unless tests are requested.
+- If config or runtime assembly changes, validate merge precedence and `/reload`.
+- If CLI behavior changes, validate actual CLI command path (not only imports/unit helpers).
+- For prompt assembly changes, validate both `/runtime prompt` and `/runtime json prompt`.
 
 ## SOP
-- Capability runtime change:
-  - Read `src/astra/config.py`, `src/astra/agent.py`, `src/astra/cli.py`, and the target runtime/doc files in full.
-  - Add or change config shape first.
-  - Add runtime/registry behavior second.
-  - Wire agent usage third.
-  - Wire CLI commands last.
-- Validation sequence:
+- Capability/runtime change order:
+  - Read `src/astra/config.py`, `src/astra/runtime/runtime.py`, `src/astra/agent.py`, and `src/astra/cli.py` in full.
+  - Change config shape first.
+  - Implement runtime/registry behavior second.
+  - Wire agent behavior third.
+  - Wire CLI command handling last.
+- Recommended validation sequence:
   - `uv run python -m compileall src`
   - `uv run python -m astra --help`
-  - Use a local `python -c` smoke check for config/runtime assembly when network access is not needed.
-  - For command-path changes, pipe commands into `astra` with a fake `OPENAI_API_KEY` when the flow does not need a real provider call.
-  - When piping commands into `astra`, ensure temporary environment overrides such as `HOME` and `OPENAI_API_KEY` apply to the `python -m astra` process, not only to the producer command at the left side of the pipe; prefer exporting them in the same shell before running the pipeline.
-  - For prompt-assembly changes, also smoke-check `/runtime prompt` and `/runtime json prompt`.
-- Common mistakes to avoid:
-  - Forgetting to carry new runtime fields through clone/reload paths.
-  - Making newly discovered resources auto-activate by accident.
-  - Changing prompt assembly without updating reload summaries and operator-facing inspection output.
-  - Validating only imports instead of validating the actual CLI command path.
-  - Setting `HOME=/tmp/...` or fake keys only on `printf` or another pipeline producer, which leaves `astra` writing to the default session directory.
-  - Building a second prompt-inspection code path in CLI instead of reusing the same runtime/agent assembly logic.
+  - `python -c` smoke checks for local config/runtime assembly when network calls are unnecessary
+  - For command-path changes, pipe scripted input into `python -m astra` with a fake `OPENAI_API_KEY`.
+- Common mistakes:
+  - Missing new runtime fields during clone/reload/switch paths.
+  - Accidentally turning discovery into auto-activation.
+  - Letting `/runtime prompt` diverge from actual provider prompt assembly.
+  - Validating only library imports instead of CLI paths.
 
 ## Documentation
-- Update `README.md` when changing CLI flags, slash commands, config keys, or runtime reload behavior.
-- Keep examples PowerShell-friendly unless cross-platform behavior is the point of the change.
+- Update `README.md` when changing CLI flags, slash commands, config keys, prompt/skill behavior, or runtime reload behavior.
+- Keep examples PowerShell-friendly unless demonstrating shell-specific behavior.
 
 ## Git and scope hygiene
-- Only modify files in this repository unless the user explicitly asks for broader changes.
-- Keep changes minimal and consistent with the existing Python package layout.
+- Only modify files in this repository unless explicitly asked for broader changes.
+- Keep changes minimal and aligned with the existing Python package layout.
