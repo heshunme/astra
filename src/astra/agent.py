@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Callable
 
 from .config import ReloadResult, ResolvedRuntimeConfig, ToolRuntimeConfig, clone_resolved_runtime_config
-from .models import AgentRunResult, Message, ToolCall, ToolContext
+from .models import AgentRunResult, Message, Session, ToolCall, ToolContext
 from .provider import OpenAICompatibleProvider, ProviderAborted, ProviderRequest
 from .runtime import CapabilityRuntime
 from .session import SessionStore
@@ -55,10 +55,27 @@ class Agent:
         self.current_system_prompt = ""
         self.session_store = session_store or SessionStore()
         self.session = self.session_store.create(str(config.cwd), config.model, config.system_prompt)
+        self._session_materialized = False
         self._session_prompt_states: dict[str, SessionPromptState] = {self.session.id: SessionPromptState()}
         self.is_streaming = False
         self.pending_tool_calls: set[str] = set()
         self.error: str | None = None
+
+    @property
+    def has_session(self) -> bool:
+        return self._session_materialized
+
+    @property
+    def current_session_id(self) -> str | None:
+        if not self._session_materialized:
+            return None
+        return self.session.id
+
+    @property
+    def current_session_label(self) -> str:
+        if not self._session_materialized:
+            return "(new)"
+        return self.session.id
 
     @property
     def active_skills(self) -> list[str]:
@@ -70,6 +87,7 @@ class Agent:
 
     def load_session(self, session_id: str) -> None:
         self.session = self.session_store.load(session_id)
+        self._session_materialized = True
         self.config.model = self.session.model
         self.config.system_prompt = self.session.system_prompt
         self.config.cwd = Path(self.session.cwd)
@@ -77,15 +95,20 @@ class Agent:
         self._refresh_system_prompt()
 
     def save_session(self) -> None:
+        if not self._session_materialized:
+            return
         self.session.model = self.config.model
         self.session.system_prompt = self.config.system_prompt
         self.session.cwd = str(self.config.cwd)
         self.session_store.save(self.session)
 
     def fork_session(self, name: str | None = None) -> str:
+        if not self._session_materialized:
+            raise RuntimeError("No saved session to fork")
         prior_state = self._session_prompt_state()
         forked = self.session_store.fork(self.session.id, name=name)
         self.session = forked
+        self._session_materialized = True
         self._session_prompt_states[forked.id] = SessionPromptState(
             skills=list(prior_state.skills),
             templates=list(prior_state.templates),
@@ -154,7 +177,9 @@ class Agent:
         )
 
     def prompt(self, text: str, on_event: EventCallback | None = None) -> AgentRunResult:
+        self._materialize_session()
         self.session.messages.append(Message(role="user", content=text, created_at=utc_now()))
+        self.save_session()
         return self._run(on_event)
 
     def continue_from_context(self, on_event: EventCallback | None = None) -> AgentRunResult:
@@ -173,6 +198,10 @@ class Agent:
 
     def _session_prompt_state(self) -> SessionPromptState:
         return self._ensure_session_prompt_state()
+
+    def _materialize_session(self) -> Session:
+        self._session_materialized = True
+        return self.session
 
     def _active_prompt_refs(self) -> list[str]:
         prompt_state = self._session_prompt_state()

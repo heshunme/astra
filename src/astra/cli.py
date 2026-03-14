@@ -413,6 +413,7 @@ def main(
             session_store=agent.session_store,
         )
         new_agent.session = agent.session
+        new_agent._session_materialized = agent._session_materialized  # type: ignore[attr-defined]
         new_agent.pending_tool_calls = set(agent.pending_tool_calls)
         new_agent.error = agent.error
         new_agent._session_prompt_states = {  # type: ignore[attr-defined]
@@ -504,7 +505,7 @@ def main(
             return True
 
         def sessions_command(_line: str) -> bool:
-            print_sessions(store, current_session_id=agent.session.id)
+            print_sessions(store, current_session_id=agent.current_session_id)
             return True
 
         def switch_command(line: str) -> bool:
@@ -524,6 +525,9 @@ def main(
             return True
 
         def fork_command(line: str) -> bool:
+            if not agent.has_session:
+                print("No saved session to fork.")
+                return True
             _command_name, _, remainder = line.partition(" ")
             name = remainder.strip() or None
             new_id = agent.fork_session(name=name)
@@ -531,6 +535,9 @@ def main(
             return True
 
         def rename_command(line: str) -> bool:
+            if not agent.has_session:
+                print("No saved session to rename.")
+                return True
             _command_name, _, remainder = line.partition(" ")
             name = remainder.strip()
             if not name:
@@ -541,6 +548,9 @@ def main(
             return True
 
         def save_command(_line: str) -> bool:
+            if not agent.has_session:
+                print("No session to save.")
+                return True
             agent.save_session()
             print(f"Saved {agent.session.id}")
             return True
@@ -620,7 +630,7 @@ def main(
                 raise SystemExit(1)
         return
 
-    print(f"Session {agent.session.id}")
+    print(f"Session {agent.current_session_label}")
     print_help()
     while True:
         try:

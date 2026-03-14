@@ -8,6 +8,8 @@ from pathlib import Path
 import pytest
 
 from astra import cli
+from astra.models import ProviderEvent
+from astra.provider import OpenAICompatibleProvider
 from astra.session import SessionStore
 
 
@@ -30,6 +32,10 @@ class FallbackStdin:
         self.buffer = io.BytesIO(data)
 
 
+def _saved_session_files(home: Path) -> list[Path]:
+    return list((home / ".astra-python" / "sessions").glob("*.json"))
+
+
 def test_runtime_json_prompt_command(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     cwd = tmp_path / "workspace"
     cwd.mkdir()
@@ -38,9 +44,10 @@ def test_runtime_json_prompt_command(capsys: pytest.CaptureFixture[str], monkeyp
     cli.main(["--cwd", str(cwd)])
 
     out = capsys.readouterr().out
-    assert "Session " in out
+    assert "Session (new)" in out
     assert '"prompt"' in out
     assert '"fragment_count"' in out
+    assert _saved_session_files(tmp_path) == []
 
 
 def test_model_and_base_url_commands(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -64,6 +71,7 @@ def test_model_and_base_url_commands(capsys: pytest.CaptureFixture[str], monkeyp
     assert "bash.max_output_bytes=32768" in out
     assert "model=custom-model" not in out
     assert "base_url=http://gateway/v1" not in out
+    assert _saved_session_files(tmp_path) == []
 
 
 def test_switch_command(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -81,6 +89,43 @@ def test_switch_command(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.
 
     out = capsys.readouterr().out
     assert f"Switched to {second.id}" in out
+
+
+def test_save_rename_and_fork_require_saved_session(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+
+    monkeypatch.setattr(builtins, "input", InputFeeder(["/save", "/rename demo", "/fork", "/exit"]))
+    cli.main(["--cwd", str(cwd)])
+
+    out = capsys.readouterr().out
+    assert "No session to save." in out
+    assert "No saved session to rename." in out
+    assert "No saved session to fork." in out
+    assert _saved_session_files(tmp_path) == []
+
+
+def test_plain_message_creates_session(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+
+    def fake_stream_chat(self, _request):
+        yield ProviderEvent(type="text_delta", delta="ok")
+        yield ProviderEvent(type="done")
+
+    monkeypatch.setattr(OpenAICompatibleProvider, "stream_chat", fake_stream_chat)
+    monkeypatch.setattr(builtins, "input", InputFeeder(["hello", "/exit"]))
+
+    cli.main(["--cwd", str(cwd)])
+
+    out = capsys.readouterr().out
+    assert "ok" in out
+    saved_sessions = _saved_session_files(tmp_path)
+    assert len(saved_sessions) == 1
 
 
 def test_cli_recovers_from_unicode_decode_error(
@@ -105,3 +150,4 @@ def test_cli_recovers_from_unicode_decode_error(
 
     captured = capsys.readouterr()
     assert "Warning: stdin contains non-UTF-8 bytes" in captured.err
+    assert _saved_session_files(tmp_path) == []

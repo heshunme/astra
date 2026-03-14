@@ -47,6 +47,75 @@ def _build_agent(cwd: Path, runtime_config, store_dir: Path) -> Agent:
     return agent
 
 
+def test_agent_does_not_persist_new_session_until_first_prompt(tmp_path: Path, runtime_config_factory) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+    store_dir = tmp_path / "sessions"
+    runtime_config = runtime_config_factory()
+
+    agent = Agent(
+        AgentConfig(
+            model=runtime_config.model,
+            api_key="test-key",
+            base_url=runtime_config.base_url,
+            cwd=cwd,
+            system_prompt=runtime_config.system_prompt,
+        ),
+        capability_runtime=CapabilityRuntime(cwd),
+        session_store=SessionStore(base_dir=store_dir),
+    )
+
+    reload_result = agent.reload_runtime(runtime_config)
+    assert reload_result.success
+    assert list(store_dir.glob("*.json")) == []
+
+    agent.provider = FakeProvider([[ProviderEvent(type="text_delta", delta="ok"), ProviderEvent(type="done")]])
+    result = agent.prompt("hello")
+
+    assert result.error is None
+    saved_sessions = list(store_dir.glob("*.json"))
+    assert len(saved_sessions) == 1
+    loaded = SessionStore(base_dir=store_dir).load(agent.session.id)
+    assert loaded.messages[0].role == "user"
+    assert loaded.messages[0].content == "hello"
+
+
+def test_agent_persists_first_user_message_even_if_provider_fails(tmp_path: Path, runtime_config_factory) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+    store_dir = tmp_path / "sessions"
+    runtime_config = runtime_config_factory()
+
+    class FailingProvider:
+        def close_active_stream(self) -> None:
+            return None
+
+        def stream_chat(self, _request):
+            raise RuntimeError("provider failed")
+
+    agent = Agent(
+        AgentConfig(
+            model=runtime_config.model,
+            api_key="test-key",
+            base_url=runtime_config.base_url,
+            cwd=cwd,
+            system_prompt=runtime_config.system_prompt,
+        ),
+        capability_runtime=CapabilityRuntime(cwd),
+        session_store=SessionStore(base_dir=store_dir),
+    )
+    reload_result = agent.reload_runtime(runtime_config)
+    assert reload_result.success
+    agent.provider = FailingProvider()
+
+    result = agent.prompt("hello")
+
+    assert result.error == "provider failed"
+    loaded = SessionStore(base_dir=store_dir).load(agent.session.id)
+    assert loaded.messages[0].role == "user"
+    assert loaded.messages[0].content == "hello"
+
+
 def test_agent_tool_call_round_trip(tmp_path: Path, runtime_config_factory) -> None:
     cwd = tmp_path / "workspace"
     cwd.mkdir()

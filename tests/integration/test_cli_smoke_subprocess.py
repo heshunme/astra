@@ -31,6 +31,7 @@ def test_cli_smoke_runtime_prompt_json_subprocess(tmp_path: Path) -> None:
     )
 
     assert process.returncode == 0, process.stderr
-    assert "Session " in process.stdout
+    assert "Session (new)" in process.stdout
     assert '"prompt"' in process.stdout
     assert '"fragment_count"' in process.stdout
+    assert list((tmp_path / ".astra-python" / "sessions").glob("*.json")) == []

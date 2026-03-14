@@ -31,6 +31,8 @@ astra --model gpt-4o-mini --base-url http://your-gateway/v1
 
 Sessions are stored under `~/.astra-python/sessions` by default.
 
+Starting the CLI does not create a saved session by itself. A new session is written only after you send a normal user message to the model. Slash commands such as `/help`, `/runtime`, `/tools`, `/model`, `/base-url`, `/reload`, `/save`, `/rename`, and `/fork` do not create a new session on their own.
+
 ## Reloadable config
 
 Reloadable config is read from:
@@ -150,6 +152,8 @@ This is the preferred way to check whether config, prompt files, skills, and in-
 - `/exit`
 - `/skill:<name>`
 - `/template:<name>`
+
+`/save`, `/rename`, and `/fork` require an existing saved session. If you have only used slash commands in the current CLI process, they will print a message instead of creating an empty session.
 
 Use `/runtime prompt` for a human-readable view of the fully assembled system prompt and the fragment order that produced it.
 
