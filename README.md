@@ -190,7 +190,15 @@ One-command local smoke for the current CLI/runtime surface:
 bash scripts/smoke_cli.sh
 ```
 
-This script runs `compileall`, CLI help, unit/integration tests excluding contract tests, and a scripted local CLI session that exercises `/tools`, `/runtime`, `/reload`, `/reload code`, session commands, and capability activation without requiring a real provider key.
+The smoke flow is implemented in `scripts/smoke_cli.py`. `scripts/smoke_cli.sh` is a thin compatibility wrapper that forwards to the Python implementation.
+
+It runs `compileall`, CLI help, unit/integration tests excluding contract tests, and a scripted local CLI session that exercises `/tools`, `/runtime`, `/reload`, `/reload code`, session commands, and capability activation without requiring a real provider key.
+
+Direct Python entrypoint:
+
+```bash
+.venv/bin/python scripts/smoke_cli.py
+```
 
 To add one real end-to-end provider call after the local smoke:
 
