@@ -178,6 +178,7 @@ class Agent:
 
     def prompt(self, text: str, on_event: EventCallback | None = None) -> AgentRunResult:
         self._materialize_session()
+        self._set_default_session_name(text)
         self.session.messages.append(Message(role="user", content=text, created_at=utc_now()))
         self.save_session()
         return self._run(on_event)
@@ -202,6 +203,15 @@ class Agent:
     def _materialize_session(self) -> Session:
         self._session_materialized = True
         return self.session
+
+    def _set_default_session_name(self, text: str) -> None:
+        if self.session.messages:
+            return
+        if (self.session.name or "").strip():
+            return
+        normalized = text.strip()
+        if normalized:
+            self.session.name = normalized
 
     def _active_prompt_refs(self) -> list[str]:
         prompt_state = self._session_prompt_state()

@@ -4,6 +4,7 @@ import builtins
 import io
 import sys
 import time
+import json
 from pathlib import Path
 
 import pytest
@@ -211,6 +212,29 @@ def test_plain_message_creates_session(
     assert "ok" in out
     saved_sessions = _saved_session_files(tmp_path)
     assert len(saved_sessions) == 1
+    data = json.loads(saved_sessions[0].read_text(encoding="utf-8"))
+    assert data["name"] == "hello"
+
+
+def test_sessions_command_shows_first_prompt_as_default_name(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+
+    def fake_stream_chat(self, _request):
+        yield ProviderEvent(type="text_delta", delta="ok")
+        yield ProviderEvent(type="done")
+
+    monkeypatch.setattr(OpenAICompatibleProvider, "stream_chat", fake_stream_chat)
+    monkeypatch.setattr(builtins, "input", InputFeeder(["hello", "/sessions", "/exit"]))
+
+    cli.main(["--cwd", str(cwd)])
+
+    out = capsys.readouterr().out
+    assert "Sessions" in out
+    assert "hello" in out
+    assert "(unnamed)" not in out
 
 
 def test_cli_recovers_from_unicode_decode_error(

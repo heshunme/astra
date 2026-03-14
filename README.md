@@ -33,6 +33,8 @@ Sessions are stored under `~/.astra-python/sessions` by default.
 
 Starting the CLI does not create a saved session by itself. A new session is written only after you send a normal user message to the model. Slash commands such as `/help`, `/runtime`, `/tools`, `/model`, `/base-url`, `/reload`, `/save`, `/rename`, and `/fork` do not create a new session on their own.
 
+For a new conversation, the first normal user prompt becomes the default saved session name until you change it with `/rename`.
+
 ## Reloadable config
 
 Reloadable config is read from:
