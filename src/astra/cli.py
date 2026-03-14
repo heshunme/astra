@@ -171,6 +171,7 @@ def print_runtime_summary(agent: Agent, show_warnings_only: bool = False) -> Non
 
 
 def print_runtime_prompt(agent: Agent) -> None:
+    inspection = agent.inspect_prompt()
     prompt_summary = build_runtime_prompt_summary(agent)
     fragments = prompt_summary["fragments"]
     print("Runtime prompt")
@@ -183,10 +184,16 @@ def print_runtime_prompt(agent: Agent) -> None:
             )
     else:
         print("fragments=(none)")
-    print("assembled:")
-    assembled = prompt_summary["assembled"]
-    if isinstance(assembled, str) and assembled:
-        print(assembled)
+    print("assembled_with_boundaries:")
+    if inspection.fragments:
+        total = len(inspection.fragments)
+        for index, fragment in enumerate(inspection.fragments, start=1):
+            print(f"----- fragment[{index}/{total}] BEGIN key={fragment.key} source={fragment.source} chars={fragment.text_length} -----")
+            if fragment.text:
+                print(fragment.text)
+            else:
+                print("(empty)")
+            print(f"----- fragment[{index}/{total}] END -----")
     else:
         print("(empty)")
 
