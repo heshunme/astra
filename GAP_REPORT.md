@@ -17,6 +17,9 @@ The Python implementation currently includes:
 - Manual runtime reload via `/reload`
 - Best-effort module reload via `/reload code`
 - Project/global YAML config for a narrow set of runtime options
+- Prompt assembly with ordered fragments
+- Project/global prompt and skill discovery plus session-scoped activation
+- Runtime inspection for assembled prompt, warnings, and active capabilities
 
 This means the Python project already covers the narrow “core coding harness” path, but not the broader product surface of `pi`.
 
@@ -34,6 +37,8 @@ These areas are present in both projects, though often with much lower scope in 
 - Manual runtime reload
 - Model selection
 - Configurable provider endpoint
+- Minimal prompt/skill/template capability runtime
+- Runtime inspection for prompt assembly and loaded capability resources
 
 ### Major gaps still open
 
@@ -42,7 +47,7 @@ These are the largest remaining differences from the original `pi`:
 - Interactive TUI and all terminal UI components
 - RPC mode and SDK-oriented process integration
 - Provider ecosystem and auth flows
-- Extension, skill, prompt-template, and theme systems
+- Extensions and theme systems
 - Rich settings/resource loading and reload behavior
 - Advanced session management and compaction
 - Broader command surface and workflow commands
@@ -127,6 +132,11 @@ Python currently supports:
 
 - Global YAML config: `~/.astra-python/config.yaml`
 - Project YAML config: `.astra/config.yaml`
+- Prompt order configuration
+- Capability discovery paths for prompts and skills
+- Project/global prompt and skill resource discovery
+- Session-scoped `/skill:` and `/template:` activation
+- Runtime inspection via `/runtime`, `/runtime warnings`, `/runtime prompt`, and `/runtime json prompt`
 - Runtime reload for:
   - `model`
   - `base_url`
@@ -138,8 +148,8 @@ Missing from Python:
 
 - Automatic file watching
 - Theme config and theme hot reload
-- Context file loading
-n- Resource loader abstraction
+- Rich context file loading beyond skill-bundled resources
+- Resource loader abstraction
 - Rich settings categories
 - Persistent auth/config backends beyond simple files
 
@@ -203,6 +213,11 @@ Current Python command set:
 - `/model`
 - `/base-url`
 - `/tools`
+- `/runtime`
+- `/runtime warnings`
+- `/runtime json`
+- `/runtime prompt`
+- `/runtime json prompt`
 - `/sessions`
 - `/switch`
 - `/fork`
@@ -211,6 +226,8 @@ Current Python command set:
 - `/reload code`
 - `/save`
 - `/exit`
+- `/skill:<name>`
+- `/template:<name>`
 
 Original `pi` exposes a much broader operational command surface, including workflow-specific commands for auth, model management, settings, reload, compaction, sessions, and more.
 
@@ -234,9 +251,20 @@ Original `pi` includes first-class concepts for:
 - Themes
 - Pi packages
 
-Python currently includes none of these systems.
+Python currently includes a minimal local capability layer for:
 
-That means Python is currently a standalone harness, not a customizable platform.
+- Skills loaded from `skill.yaml`
+- Prompt templates loaded from prompt markdown files
+- Session-scoped activation of discovered resources
+
+Python still does not include:
+
+- An extension system
+- Theme support
+- Package-managed capability distribution
+- Hook/interception surfaces comparable to the original project
+
+That means Python is no longer just a single fixed harness, but it is still far from a customizable platform comparable to the original project.
 
 ## 8. Export and auxiliary features
 
@@ -305,9 +333,9 @@ When the Python project gains a new subsystem or meaningfully narrows a gap, upd
 - describing the exact current boundary, not the aspirational end state
 - avoiding vague claims like “supports parity” unless the behavior is actually comparable
 
-## 2026-03-08 update
+## 2026-03-14 update
 
-The Python project now also includes a minimal capability runtime layer.
+This report was updated to reflect capability runtime work that had already landed in code but was still underreported in the gap summary.
 
 Newly present or partially present:
 
@@ -315,6 +343,7 @@ Newly present or partially present:
 - Prompt assembly beyond a single direct `system_prompt` string
 - Local prompt loading from `.astra/prompts/*.md`
 - Local skill loading from `.astra/skills/*/skill.yaml`
+- Config-driven prompt ordering and config-driven skill enablement
 - Process-session activation via `/skill:<name>` and `/template:<name>`
 - Runtime inspection via `/runtime` and `/runtime warnings`
 - Final prompt inspection via `/runtime prompt` and `/runtime json prompt`
