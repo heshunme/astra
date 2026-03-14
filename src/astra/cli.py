@@ -229,6 +229,7 @@ def print_runtime_prompt(agent: Agent) -> None:
     inspection = agent.inspect_prompt()
     prompt_summary = build_runtime_prompt_summary(agent)
     fragments = prompt_summary["fragments"]
+    prompt_fragments = agent.runtime.snapshot().prompt_fragments
     print("Runtime prompt")
     print(f"fragments={prompt_summary['fragment_count']}")
     print(f"char_length={prompt_summary['char_length']}")
@@ -244,8 +245,10 @@ def print_runtime_prompt(agent: Agent) -> None:
         total = len(inspection.fragments)
         for index, fragment in enumerate(inspection.fragments, start=1):
             print(f"----- fragment[{index}/{total}] BEGIN key={fragment.key} source={fragment.source} chars={fragment.text_length} -----")
-            if fragment.text:
-                print(fragment.text)
+            prompt_fragment = prompt_fragments.get(fragment.key)
+            text = prompt_fragment.text.strip() if prompt_fragment is not None else ""
+            if text:
+                print(text)
             else:
                 print("(empty)")
             print(f"----- fragment[{index}/{total}] END -----")
