@@ -64,6 +64,16 @@ class ToolSpec:
 
 
 @dataclass(slots=True)
+class SkillCatalogEntry:
+    name: str
+    summary: str
+    when_to_use: str = ""
+    files: list[str] = field(default_factory=list)
+    source: str = ""
+    history_only: bool = False
+
+
+@dataclass(slots=True)
 class Session:
     id: str
     name: str | None
@@ -73,6 +83,7 @@ class Session:
     model: str
     system_prompt: str
     messages: list[Message]
+    skill_catalog_snapshot: list[SkillCatalogEntry] = field(default_factory=list)
     parent_session_id: str | None = None
 
 

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from astra.models import Message, ToolCall
+from astra.models import Message, SkillCatalogEntry, ToolCall
 from astra.session import SessionStore
 
 
@@ -15,6 +15,15 @@ pytestmark = pytest.mark.unit
 def test_session_save_and_load_round_trip(tmp_path: Path) -> None:
     store = SessionStore(base_dir=tmp_path)
     session = store.create(cwd="/repo", model="gpt-test", system_prompt="sys", name="demo")
+    session.skill_catalog_snapshot.append(
+        SkillCatalogEntry(
+            name="review",
+            summary="review checklist",
+            when_to_use="Use for code review requests.",
+            files=["/repo/.astra/skills/review/checklist.md"],
+            source="/repo/.astra/skills/review/skill.yaml",
+        )
+    )
     session.messages.append(
         Message(
             role="assistant",
@@ -31,6 +40,8 @@ def test_session_save_and_load_round_trip(tmp_path: Path) -> None:
     assert loaded.name == "demo"
     assert loaded.model == "gpt-test"
     assert loaded.system_prompt == "sys"
+    assert loaded.skill_catalog_snapshot[0].name == "review"
+    assert not loaded.skill_catalog_snapshot[0].history_only
     assert loaded.messages[0].tool_calls[0].name == "read"
     assert loaded.messages[0].metadata == {"a": 1}
 

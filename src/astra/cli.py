@@ -132,12 +132,16 @@ def print_reload_summary(agent: Agent, message: str, warnings: list[str] | None 
     snapshot = agent.runtime.snapshot()
     print(message)
     enabled_tools = ", ".join(agent.tools) or "(none)"
-    active_skills = ", ".join(agent.active_skills) or "(none)"
+    available_skills = ", ".join(agent.available_skill_names()) or "(none)"
+    history_only_skills = ", ".join(agent.history_only_skill_names()) or "(none)"
+    pending_skill = agent.pending_skill_name or "(none)"
     active_templates = ", ".join(agent.active_templates) or "(none)"
     print(f"model={agent.config.model}")
     print(f"base_url={agent.config.base_url}")
     print(f"tools={enabled_tools}")
-    print(f"skills.active={active_skills}")
+    print(f"skills.available={available_skills}")
+    print(f"skills.history_only={history_only_skills}")
+    print(f"skills.pending={pending_skill}")
     print(f"templates.active={active_templates}")
     print(f"prompts.loaded={len(snapshot.diagnostics.loaded_prompts)}")
     print(f"skills.loaded={len(snapshot.diagnostics.loaded_skills)}")
@@ -192,8 +196,9 @@ def build_runtime_summary(agent: Agent) -> dict[str, object]:
             "loaded": list(snapshot.diagnostics.loaded_prompts),
         },
         "skills": {
-            "available": agent.runtime.list_skill_names(),
-            "active": list(agent.active_skills),
+            "available": agent.available_skill_names(),
+            "history_only": agent.history_only_skill_names(),
+            "pending": agent.pending_skill_name,
             "loaded": list(snapshot.diagnostics.loaded_skills),
         },
         "templates": {
@@ -247,8 +252,9 @@ def print_runtime_summary(agent: Agent, show_warnings_only: bool = False) -> Non
     print(f"prompts.order={', '.join(prompt_summary['order']) or '(none)'}")
     print(f"prompts.available={', '.join(prompt_summary['available']) or '(none)'}")
     print(f"skills.available={', '.join(skill_summary['available']) or '(none)'}")
+    print(f"skills.history_only={', '.join(skill_summary['history_only']) or '(none)'}")
+    print(f"skills.pending={skill_summary['pending'] or '(none)'}")
     print(f"templates.available={', '.join(template_summary['available']) or '(none)'}")
-    print(f"skills.active={', '.join(skill_summary['active']) or '(none)'}")
     print(f"templates.active={', '.join(template_summary['active']) or '(none)'}")
     print(f"prompts.loaded={', '.join(prompt_summary['loaded']) or '(none)'}")
     print(f"skills.loaded={', '.join(skill_summary['loaded']) or '(none)'}")
@@ -276,7 +282,7 @@ def print_runtime_prompt(agent: Agent) -> None:
         for index, fragment in enumerate(inspection.fragments, start=1):
             print(f"----- fragment[{index}/{total}] BEGIN key={fragment.key} source={fragment.source} chars={fragment.text_length} -----")
             prompt_fragment = prompt_fragments.get(fragment.key)
-            text = prompt_fragment.text.strip() if prompt_fragment is not None else ""
+            text = prompt_fragment.text.strip() if prompt_fragment is not None else agent.prompt_fragment_text(fragment.key)
             if text:
                 print(text)
             else:
@@ -426,7 +432,6 @@ def main(
                 prompts=config_module.PromptCapabilityConfig(paths=list(agent.runtime_config.capabilities.prompts.paths)),
                 skills=config_module.SkillCapabilityConfig(
                     paths=list(agent.runtime_config.capabilities.skills.paths),
-                    enabled=list(agent.runtime_config.capabilities.skills.enabled),
                 ),
             ),
         )
@@ -446,12 +451,19 @@ def main(
         new_agent._session_materialized = agent._session_materialized  # type: ignore[attr-defined]
         new_agent.pending_tool_calls = set(agent.pending_tool_calls)
         new_agent.error = agent.error
-        new_agent._session_prompt_states = {  # type: ignore[attr-defined]
-            session_id: agent_module.SessionPromptState(
-                skills=list(state.skills),
+        new_agent._session_runtime_states = {  # type: ignore[attr-defined]
+            session_id: agent_module.SessionRuntimeState(
                 templates=list(state.templates),
+                pending_skill_trigger=(
+                    agent_module.PendingSkillTrigger(
+                        name=state.pending_skill_trigger.name,
+                        raw_command=state.pending_skill_trigger.raw_command,
+                    )
+                    if state.pending_skill_trigger is not None
+                    else None
+                ),
             )
-            for session_id, state in agent._session_prompt_states.items()
+            for session_id, state in agent._session_runtime_states.items()
         }
         result = new_agent.reload_runtime(runtime_after_code_reload)
         agent = new_agent
@@ -460,6 +472,20 @@ def main(
             reload_runtime_from_config()
         else:
             print(f"Reload failed after code reload: {result.message}")
+
+    def run_user_prompt(text: str, metadata: dict[str, object] | None = None) -> None:
+        success, effective_text, effective_metadata = agent.consume_pending_skill_prompt(text)
+        if not success:
+            print(effective_text)
+            return
+        if metadata:
+            merged_metadata = dict(effective_metadata or {})
+            merged_metadata.update(metadata)
+            effective_metadata = merged_metadata
+        result = agent.prompt(effective_text, metadata=effective_metadata, on_event=stream_callback)
+        print()
+        if result.error:
+            print(result.error, file=sys.stderr)
 
     def register_commands() -> None:
         def help_command(_line: str) -> bool:
@@ -619,10 +645,25 @@ def main(
             raise EOFError
 
         def skill_prefix_command(_line: str, suffix: str) -> bool:
-            name = suffix.strip()
+            remainder = suffix.strip()
+            if not remainder:
+                return False
+            name, _, request_text = remainder.partition(" ")
             if not name:
                 return False
-            success, message = agent.activate_skill(name)
+            request_text = request_text.strip()
+            if request_text:
+                success, rewritten, metadata = agent.build_skill_prompt(name, request_text, _line)
+                if not success:
+                    print(rewritten)
+                    return True
+                agent.clear_pending_skill()
+                result = agent.prompt(rewritten, metadata=metadata, on_event=stream_callback)
+                print()
+                if result.error:
+                    print(result.error, file=sys.stderr)
+                return True
+            success, message = agent.arm_skill(name, _line)
             print(message)
             return True
 
@@ -666,8 +707,8 @@ def main(
         command_registry.register_prefix(
             PrefixCommandSpec(
                 prefix="/skill:",
-                usage="/skill:<name>",
-                summary="Activate a discovered skill for the current process session",
+                usage="/skill:<name> [request]",
+                summary="Use a discovered skill for one turn or arm it for the next prompt",
                 handler=skill_prefix_command,
             )
         )
@@ -702,10 +743,7 @@ def main(
                 continue
             if line.startswith("/") and command_registry.dispatch(line):
                 continue
-            result = agent.prompt(line, on_event=stream_callback)
-            print()
-            if result.error:
-                print(result.error, file=sys.stderr)
+            run_user_prompt(line)
         except EOFError:
             print()
             agent.save_session()

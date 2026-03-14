@@ -87,7 +87,6 @@ def create_workspace(workspace: Path, env_file: Path) -> str:
           prompts:
             paths: []
           skills:
-            enabled: []
             paths: []
         """,
     )
@@ -197,7 +196,7 @@ def create_workspace(workspace: Path, env_file: Path) -> str:
         /runtime warnings
         /runtime prompt
         /runtime json prompt
-        /skill:review
+        /skill:review Review src/demo.py for issues.
         /skill:debug
         /template:pairing
         /reload
@@ -225,7 +224,7 @@ def print_intro(temp_root: Path, workspace: Path, env_file: Path, env_mode: str)
     print("  /runtime")
     print("  /runtime prompt")
     print("  /runtime json prompt")
-    print("  /skill:review")
+    print("  /skill:review Review src/demo.py for issues.")
     print("  /skill:debug")
     print("  /template:pairing")
     print("  /reload")

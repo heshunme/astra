@@ -72,7 +72,6 @@ capabilities:
   prompts:
     paths: []
   skills:
-    enabled: [review]
     paths: []
 ```
 
@@ -92,13 +91,14 @@ Minimal `skill.yaml` example:
 ```yaml
 name: review
 summary: Add structured review guidance.
+when_to_use: Use when the user asks for a code review.
 prompt_files:
   - checklist.md
 context_files:
   - style.md
 ```
 
-Only prompt and skill resources referenced by config or activated in-session are injected into the final system prompt.
+Skill files stay on disk until the model reads them with the `read` tool. Astra injects a generated skill catalog into the system prompt on every turn so the model knows which skills are available, what they are for, and which files to read on demand.
 
 ## Runtime inspection
 
@@ -123,15 +123,16 @@ Example:
 ```text
 /runtime prompt
 Runtime prompt
-fragments=2
-char_length=123
+fragments=3
+char_length=240
 fragment[1]=builtin:base source=builtin chars=86
-fragment[2]=prompt:repo-rules source=E:\repo\.astra\prompts\repo-rules.md chars=37
+fragment[2]=session:skills-catalog source=session:<id> chars=117
+fragment[3]=prompt:repo-rules source=E:\repo\.astra\prompts\repo-rules.md chars=37
 assembled:
 ...
 ```
 
-This is the preferred way to check whether config, prompt files, skills, and in-session `/skill:` or `/template:` activations actually changed the final prompt sent to the provider.
+This is the preferred way to check whether config, prompt files, the generated skill catalog, and in-session `/template:` changes match the final prompt sent to the provider.
 
 ## Supported commands
 
@@ -153,7 +154,7 @@ This is the preferred way to check whether config, prompt files, skills, and in-
 - `/reload code`
 - `/save`
 - `/exit`
-- `/skill:<name>`
+- `/skill:<name> [request]`
 - `/template:<name>`
 
 `/save`, `/rename`, and `/fork` require an existing saved session. If you have only used slash commands in the current CLI process, they will print a message instead of creating an empty session.
@@ -163,6 +164,8 @@ Use `/resume` to interactively list saved sessions by number and reopen one with
 Use `/runtime prompt` for a human-readable view of the fully assembled system prompt and the fragment order that produced it.
 
 Use `/runtime json prompt` for a machine-readable version of the same inspection data.
+
+`/skill:<name> <request>` rewrites that input into a normal user message for a single turn. `/skill:<name>` without a request arms the next normal user message once, then clears itself. In both cases the rewritten natural-language request is what gets stored in session history, while the raw slash command is preserved only in message metadata.
 
 ## Testing
 

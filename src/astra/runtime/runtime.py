@@ -39,7 +39,7 @@ class PromptInspection:
 class SkillSpec:
     name: str
     summary: str
-    prompt_key: str
+    when_to_use: str
     source: str
     files: list[str] = field(default_factory=list)
 
@@ -175,7 +175,10 @@ class CapabilityRuntime:
             self._register_prompt_file(prompt_registry, diagnostics, key, prompt_file)
 
         for skill_dir in self._iter_skill_dirs(runtime_config):
-            self._register_skill(skill_registry, prompt_registry, diagnostics, skill_dir)
+            self._register_skill(skill_registry, diagnostics, skill_dir)
+
+        if skill_registry.items() and "read" not in enabled_tools:
+            diagnostics.warnings.append("Skills are available but the read tool is disabled; skill details cannot be loaded on demand.")
 
         for ref in self._default_prompt_refs(runtime_config):
             normalized_ref = self.normalize_prompt_ref(ref)
@@ -198,6 +201,9 @@ class CapabilityRuntime:
 
     def list_skill_names(self) -> list[str]:
         return sorted(self._snapshot.skills)
+
+    def get_skill(self, name: str) -> SkillSpec | None:
+        return self._snapshot.skills.get(name)
 
     def list_template_names(self) -> list[str]:
         template_names = [key.split(":", 1)[1] for key in self._snapshot.prompt_fragments if key.startswith("prompt:")]
@@ -255,9 +261,7 @@ class CapabilityRuntime:
         return normalized_ref
 
     def _default_prompt_refs(self, runtime_config: ResolvedRuntimeConfig) -> list[str]:
-        refs = list(runtime_config.prompts.order)
-        refs.extend(f"skill:{name}" for name in runtime_config.capabilities.skills.enabled)
-        return refs
+        return list(runtime_config.prompts.order)
 
     def _iter_prompt_files(self, runtime_config: ResolvedRuntimeConfig) -> list[Path]:
         prompt_files: list[Path] = []
@@ -326,7 +330,6 @@ class CapabilityRuntime:
     def _register_skill(
         self,
         skill_registry: SkillRegistry,
-        prompt_registry: PromptRegistry,
         diagnostics: RuntimeDiagnostics,
         skill_dir: Path,
     ) -> None:
@@ -344,11 +347,15 @@ class CapabilityRuntime:
 
         name = loaded.get("name")
         summary = loaded.get("summary")
+        when_to_use = loaded.get("when_to_use")
         if not isinstance(name, str) or not name.strip():
             diagnostics.warnings.append(f"Skill file missing string name: {skill_file}")
             return
         if not isinstance(summary, str) or not summary.strip():
             diagnostics.warnings.append(f"Skill file missing string summary: {skill_file}")
+            return
+        if when_to_use is not None and (not isinstance(when_to_use, str) or not when_to_use.strip()):
+            diagnostics.warnings.append(f"Skill file when_to_use must be a non-empty string: {skill_file}")
             return
 
         prompt_files = self._require_string_list(diagnostics, loaded.get("prompt_files"), skill_file, "prompt_files")
@@ -362,26 +369,22 @@ class CapabilityRuntime:
             diagnostics.warnings.append(f"Skill has no text resources: {skill_file}")
             return
 
-        skill_text_parts: list[str] = []
         loaded_files: list[str] = []
         for relative_path in ordered_files:
             resource_file = (skill_dir / relative_path).resolve()
             if not resource_file.exists() or not resource_file.is_file():
                 diagnostics.warnings.append(f"Skill resource not found: {resource_file}")
                 return
-            try:
-                skill_text_parts.append(resource_file.read_text(encoding="utf-8"))
-            except Exception as exc:
-                diagnostics.warnings.append(f"Failed to read skill resource {resource_file}: {exc}")
-                return
             loaded_files.append(str(resource_file))
 
-        prompt_key = f"skill:{name}"
-        prompt_registry.register(
-            PromptFragment(key=prompt_key, text="\n\n".join(part.strip() for part in skill_text_parts if part.strip()), source=str(skill_file))
-        )
         skill_registry.register(
-            SkillSpec(name=name, summary=summary, prompt_key=prompt_key, source=str(skill_file), files=loaded_files)
+            SkillSpec(
+                name=name,
+                summary=summary.strip(),
+                when_to_use=(when_to_use or "").strip(),
+                source=str(skill_file),
+                files=loaded_files,
+            )
         )
         diagnostics.loaded_skills.append(name)
 

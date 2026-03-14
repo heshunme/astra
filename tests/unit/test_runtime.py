@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from astra.config import CapabilitiesConfig, PromptRuntimeConfig, SkillCapabilityConfig
+from astra.config import PromptRuntimeConfig, ToolRuntimeConfig
 from astra.runtime import CapabilityRuntime
 
 
@@ -41,7 +41,7 @@ def test_runtime_skill_parse_failure_is_soft_warning(tmp_path: Path, runtime_con
     assert any("Failed to parse skill file" in warning for warning in snapshot.diagnostics.warnings)
 
 
-def test_runtime_discovered_skill_is_inert_until_activated(tmp_path: Path, runtime_config_factory) -> None:
+def test_runtime_discovers_skill_metadata_without_loading_body(tmp_path: Path, runtime_config_factory) -> None:
     cwd = tmp_path / "workspace"
     skill_dir = cwd / ".astra" / "skills" / "review"
     skill_dir.mkdir(parents=True)
@@ -58,11 +58,60 @@ prompt_files:
 
     runtime = CapabilityRuntime(cwd)
     cfg = runtime_config_factory(prompts=PromptRuntimeConfig(order=["builtin:base", "config:system"]))
-    runtime.reload(cfg)
+    snapshot = runtime.reload(cfg)
 
     assert runtime.has_skill("review")
+    assert snapshot.skills["review"].summary == "review checklist"
+    assert snapshot.skills["review"].files == [str((skill_dir / "checklist.md").resolve())]
     assert "skill prompt body" not in runtime.inspect_prompt(cfg).assembled
-    assert "skill prompt body" in runtime.inspect_prompt(cfg, ["skill:review"]).assembled
+    assert "skill:review" not in snapshot.prompt_fragments
+
+
+def test_runtime_skill_when_to_use_is_optional_metadata(tmp_path: Path, runtime_config_factory) -> None:
+    cwd = tmp_path / "workspace"
+    skill_dir = cwd / ".astra" / "skills" / "debug"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "skill.yaml").write_text(
+        """
+name: debug
+summary: debug checklist
+when_to_use: Use for reproducing and isolating bugs.
+prompt_files:
+  - checklist.md
+""".strip(),
+        encoding="utf-8",
+    )
+    (skill_dir / "checklist.md").write_text("debug prompt body", encoding="utf-8")
+
+    runtime = CapabilityRuntime(cwd)
+    snapshot = runtime.reload(runtime_config_factory())
+
+    assert snapshot.skills["debug"].when_to_use == "Use for reproducing and isolating bugs."
+
+
+def test_runtime_warns_when_skills_exist_but_read_tool_is_disabled(tmp_path: Path, runtime_config_factory) -> None:
+    cwd = tmp_path / "workspace"
+    skill_dir = cwd / ".astra" / "skills" / "review"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "skill.yaml").write_text(
+        """
+name: review
+summary: review checklist
+prompt_files:
+  - checklist.md
+""".strip(),
+        encoding="utf-8",
+    )
+    (skill_dir / "checklist.md").write_text("skill prompt body", encoding="utf-8")
+
+    runtime = CapabilityRuntime(cwd)
+    snapshot = runtime.reload(
+        runtime_config_factory(
+            tools=ToolRuntimeConfig(enabled_tools=["write", "edit", "ls", "find", "grep", "bash"])
+        )
+    )
+
+    assert any("read tool is disabled" in warning for warning in snapshot.diagnostics.warnings)
 
 
 def test_runtime_template_alias_maps_to_prompt_key(tmp_path: Path, runtime_config_factory) -> None:
@@ -78,28 +127,3 @@ def test_runtime_template_alias_maps_to_prompt_key(tmp_path: Path, runtime_confi
     inspection = runtime.inspect_prompt(cfg, ["template:repo-rules"])
     assert "template body" in inspection.assembled
     assert "repo-rules" in runtime.list_template_names()
-
-
-def test_runtime_enables_skill_from_config(tmp_path: Path, runtime_config_factory) -> None:
-    cwd = tmp_path / "workspace"
-    skill_dir = cwd / ".astra" / "skills" / "review"
-    skill_dir.mkdir(parents=True)
-    (skill_dir / "skill.yaml").write_text(
-        """
-name: review
-summary: review checklist
-prompt_files:
-  - checklist.md
-""".strip(),
-        encoding="utf-8",
-    )
-    (skill_dir / "checklist.md").write_text("enabled by config", encoding="utf-8")
-
-    runtime = CapabilityRuntime(cwd)
-    cfg = runtime_config_factory(
-        capabilities=CapabilitiesConfig(skills=SkillCapabilityConfig(enabled=["review"])),
-        prompts=PromptRuntimeConfig(order=["builtin:base", "config:system"]),
-    )
-    runtime.reload(cfg)
-
-    assert "enabled by config" in runtime.inspect_prompt(cfg).assembled

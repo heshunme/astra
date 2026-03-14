@@ -66,7 +66,7 @@ tools:
       max_output_bytes: 2048
 capabilities:
   skills:
-    enabled: [review]
+    paths: [extras/skills]
 """.strip(),
         encoding="utf-8",
     )
@@ -92,7 +92,7 @@ tools:
     assert loaded.tools.read_max_lines == 123
     assert loaded.tools.bash_timeout_seconds == 45
     assert loaded.tools.bash_max_output_bytes == 2048
-    assert loaded.capabilities.skills.enabled == ["review"]
+    assert loaded.capabilities.skills.paths == ["extras/skills"]
 
 
 def test_config_manager_invalid_tools_enabled_type(tmp_path: Path) -> None:
@@ -106,4 +106,18 @@ def test_config_manager_invalid_tools_enabled_type(tmp_path: Path) -> None:
 
     manager = ConfigManager(global_config_path=global_config)
     with pytest.raises(ConfigError, match="tools.enabled"):
+        manager.load(cwd)
+
+
+def test_config_manager_rejects_removed_skills_enabled(tmp_path: Path) -> None:
+    global_config = tmp_path / "global.yaml"
+    cwd = tmp_path / "workspace"
+    project_config = cwd / ".astra" / "config.yaml"
+    project_config.parent.mkdir(parents=True)
+
+    global_config.write_text("{}", encoding="utf-8")
+    project_config.write_text("capabilities:\n  skills:\n    enabled: [review]\n", encoding="utf-8")
+
+    manager = ConfigManager(global_config_path=global_config)
+    with pytest.raises(ConfigError, match="capabilities.skills.enabled has been removed"):
         manager.load(cwd)

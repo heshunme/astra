@@ -6,7 +6,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .models import Message, Session, SessionSummary, ToolCall
+from .models import Message, Session, SessionSummary, SkillCatalogEntry, ToolCall
 
 
 def utc_now() -> str:
@@ -22,6 +22,17 @@ def session_to_dict(session: Session) -> dict:
         "updated_at": session.updated_at,
         "model": session.model,
         "system_prompt": session.system_prompt,
+        "skill_catalog_snapshot": [
+            {
+                "name": entry.name,
+                "summary": entry.summary,
+                "when_to_use": entry.when_to_use,
+                "files": list(entry.files),
+                "source": entry.source,
+                "history_only": entry.history_only,
+            }
+            for entry in session.skill_catalog_snapshot
+        ],
         "messages": [
             {
                 "role": message.role,
@@ -53,6 +64,18 @@ def session_from_dict(data: dict) -> Session:
                 metadata=raw.get("metadata", {}),
             )
         )
+    skill_catalog_snapshot = [
+        SkillCatalogEntry(
+            name=raw.get("name", ""),
+            summary=raw.get("summary", ""),
+            when_to_use=raw.get("when_to_use", ""),
+            files=list(raw.get("files", [])),
+            source=raw.get("source", ""),
+            history_only=bool(raw.get("history_only", False)),
+        )
+        for raw in data.get("skill_catalog_snapshot", [])
+        if isinstance(raw, dict)
+    ]
     return Session(
         id=data["id"],
         name=data.get("name"),
@@ -62,6 +85,7 @@ def session_from_dict(data: dict) -> Session:
         model=data["model"],
         system_prompt=data.get("system_prompt", ""),
         messages=messages,
+        skill_catalog_snapshot=skill_catalog_snapshot,
         parent_session_id=data.get("parent_session_id"),
     )
 
@@ -86,6 +110,7 @@ class SessionStore:
             model=model,
             system_prompt=system_prompt,
             messages=[],
+            skill_catalog_snapshot=[],
         )
 
     def load(self, session_id: str) -> Session:
@@ -125,6 +150,17 @@ class SessionStore:
             model=session.model,
             system_prompt=session.system_prompt,
             messages=list(session.messages),
+            skill_catalog_snapshot=[
+                SkillCatalogEntry(
+                    name=entry.name,
+                    summary=entry.summary,
+                    when_to_use=entry.when_to_use,
+                    files=list(entry.files),
+                    source=entry.source,
+                    history_only=entry.history_only,
+                )
+                for entry in session.skill_catalog_snapshot
+            ],
             parent_session_id=session.id,
         )
         self.save(forked)

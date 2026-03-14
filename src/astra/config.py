@@ -47,7 +47,6 @@ class PromptCapabilityConfig:
 @dataclass(slots=True)
 class SkillCapabilityConfig:
     paths: list[str] = field(default_factory=list)
-    enabled: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -104,7 +103,7 @@ def clone_prompt_runtime_config(config: PromptRuntimeConfig) -> PromptRuntimeCon
 def clone_capabilities_config(config: CapabilitiesConfig) -> CapabilitiesConfig:
     return CapabilitiesConfig(
         prompts=PromptCapabilityConfig(paths=list(config.prompts.paths)),
-        skills=SkillCapabilityConfig(paths=list(config.skills.paths), enabled=list(config.skills.enabled)),
+        skills=SkillCapabilityConfig(paths=list(config.skills.paths)),
     )
 
 
@@ -278,7 +277,7 @@ class ConfigManager:
                 if paths_raw is not None:
                     capabilities.skills.paths = self._string_list(paths_raw, "capabilities.skills.paths")
                 if enabled_raw is not None:
-                    capabilities.skills.enabled = self._string_list(enabled_raw, "capabilities.skills.enabled")
+                    raise ConfigError("capabilities.skills.enabled has been removed; use discovered skills via /skill:<name> instead")
 
         return RuntimeConfig(
             model=model,

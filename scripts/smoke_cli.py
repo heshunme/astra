@@ -151,7 +151,7 @@ def create_workspace(workspace: Path, home_dir: Path) -> None:
 
         capabilities:
           skills:
-            enabled: []
+            paths: []
         """,
     )
     write_text(
@@ -276,9 +276,9 @@ def run_local_cli_smoke(
         "Runtime prompt",
         "Model set to smoke-cli-model",
         "Base URL set to http://cli-gateway.local/v1",
-        "Activated skill: review",
+        "Next message will use skill: review",
         "Activated template: repo-rules",
-        "Review checklist prompt body.",
+        "Skill catalog for this session",
         "Repo rules prompt body.",
         "Reloaded runtime configuration.",
         "Code modules reloaded.",
