@@ -6,6 +6,7 @@ These instructions apply to the entire repository tree.
 - This package is a Python replica of the core `pi-mono` coding-agent flow.
 - Keep scope focused on: CLI, session persistence, tool-calling loop, runtime reload, and OpenAI-compatible provider behavior.
 - Do not add TUI or unrelated monorepo concepts unless explicitly requested.
+- Preserve the current split where `agent-core` owns runtime behavior and CLI owns terminal/session adaptation.
 
 ## Environment
 - Use `uv` for local environment management.
@@ -53,6 +54,7 @@ These instructions apply to the entire repository tree.
 - Do not reload while a response is streaming.
 - Keep `--base-url`, YAML `base_url`, and `/base-url` behavior aligned.
 - Session history must persist across runtime reloads and session switching.
+- Session snapshot restore must also preserve runtime-only state such as active templates, pending skill trigger, `model`, `base_url`, and `system_prompt`.
 - A new session is materialized/saved only after a normal user prompt, not by slash commands alone.
 - Prompt assembly must match the exact prompt sent to provider: default refs + discovered fragments + session skill catalog + active templates.
 
@@ -61,6 +63,7 @@ These instructions apply to the entire repository tree.
 - `/skill:<name>` applies to one turn only; do not introduce permanent skill mode toggles.
 - Skill metadata can be retained in session history, but raw skill files stay on disk and are read on demand via `read` tool.
 - `/template:<name>` activates a discovered prompt fragment for the current process session state.
+- `/skill:<name>` and `/template:<name>` are core extension commands; keep them discoverable in CLI help output even though CLI built-ins are registered separately.
 - Fail soft on malformed skill YAML or missing files and surface warnings through runtime diagnostics.
 
 ## Implementation rules
@@ -70,6 +73,9 @@ These instructions apply to the entire repository tree.
 - Keep CLI behavior explicit and minimal.
 - Prefer command registries and focused handlers over growing `if/elif` command trees.
 - Keep runtime state layers explicit: persisted config, process runtime config, session-scoped temporary state.
+- Keep the ownership boundary explicit:
+  - `src/astra/agent.py` owns state machine, event stream, runtime apply/inspect, tool loop, and extension command semantics.
+  - `src/astra/cli.py` owns config loading, session store interaction, terminal rendering, and built-in slash commands.
 
 ## Validation expectations
 - For code changes, run at least targeted validation relevant to the change.
@@ -92,8 +98,10 @@ These instructions apply to the entire repository tree.
   - For command-path changes, pipe scripted input into `python -m astra` with a fake `OPENAI_API_KEY`.
 - Common mistakes:
   - Missing new runtime fields during clone/reload/switch paths.
+  - Restoring `model`/`system_prompt` but accidentally dropping session-specific `base_url` or template/pending-skill state.
   - Accidentally turning discovery into auto-activation.
   - Letting `/runtime prompt` diverge from actual provider prompt assembly.
+  - Hiding core extension commands from `/help` after changing CLI command plumbing.
   - Validating only library imports instead of CLI paths.
 
 ## Documentation

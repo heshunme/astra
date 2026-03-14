@@ -4,6 +4,7 @@ This repository contains a Python implementation of the core `pi-mono` coding-ag
 
 - OpenAI-compatible streaming chat
 - Tool calling loop
+- Agent-core state machine with a stable event stream
 - Workspace-scoped file and shell tools
 - Local JSON session persistence
 - Session switching, renaming, and forking
@@ -27,6 +28,20 @@ uv pip install -e .
 astra --model gpt-4o-mini --base-url http://your-gateway/v1
 ```
 
+## Architecture
+
+The runtime is now split into two layers:
+
+- `agent-core`
+  - Owns conversation state, runtime state, prompt assembly, skill/template behavior, tool orchestration, and event emission
+- CLI
+  - Owns config loading, session persistence, terminal I/O, and built-in interactive commands such as `/model`, `/base-url`, `/reload`, `/sessions`, and `/exit`
+
+Extension commands are handled by the core, not the CLI command registry:
+
+- `/skill:<name> [request]`
+- `/template:<name>`
+
 ## Session storage
 
 Sessions are stored under `~/.astra-python/sessions` by default.
@@ -34,6 +49,14 @@ Sessions are stored under `~/.astra-python/sessions` by default.
 Starting the CLI does not create a saved session by itself. A new session is written only after you send a normal user message to the model. Slash commands such as `/help`, `/runtime`, `/tools`, `/model`, `/base-url`, `/reload`, `/save`, `/rename`, and `/fork` do not create a new session on their own.
 
 For a new conversation, the first normal user prompt becomes the default saved session name until you change it with `/rename`.
+
+Saved sessions persist both message history and the agent snapshot needed to restore runtime-only state for that session, including:
+
+- active templates
+- pending one-shot skill trigger
+- per-session runtime values such as `model`, `base_url`, and `system_prompt`
+
+When you restore a session via `--session`, `/switch`, or `/resume`, Astra restores those snapshot values before continuing.
 
 ## Reloadable config
 
@@ -126,9 +149,9 @@ Runtime prompt
 fragments=3
 char_length=240
 fragment[1]=builtin:base source=builtin chars=86
-fragment[2]=session:skills-catalog source=session:<id> chars=117
+fragment[2]=session:skills-catalog source=agent-core chars=117
 fragment[3]=prompt:repo-rules source=E:\repo\.astra\prompts\repo-rules.md chars=37
-assembled:
+assembled_with_boundaries:
 ...
 ```
 
@@ -166,6 +189,8 @@ Use `/runtime prompt` for a human-readable view of the fully assembled system pr
 Use `/runtime json prompt` for a machine-readable version of the same inspection data.
 
 `/skill:<name> <request>` rewrites that input into a normal user message for a single turn. `/skill:<name>` without a request arms the next normal user message once, then clears itself. In both cases the rewritten natural-language request is what gets stored in session history, while the raw slash command is preserved only in message metadata.
+
+In non-interactive mode, for example `python -m astra "hello"`, prompt failures exit with status code `1`.
 
 ## Testing
 
