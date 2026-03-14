@@ -143,6 +143,7 @@ This is the preferred way to check whether config, prompt files, skills, and in-
 - `/runtime prompt`
 - `/runtime json prompt`
 - `/sessions`
+- `/resume`
 - `/switch <session-id>`
 - `/fork [name]`
 - `/rename <name>`
@@ -154,6 +155,8 @@ This is the preferred way to check whether config, prompt files, skills, and in-
 - `/template:<name>`
 
 `/save`, `/rename`, and `/fork` require an existing saved session. If you have only used slash commands in the current CLI process, they will print a message instead of creating an empty session.
+
+Use `/resume` to interactively list saved sessions by number and reopen one without typing a session id. After resuming, Astra prints the effective runtime configuration for that session without replaying message history.
 
 Use `/runtime prompt` for a human-readable view of the fully assembled system prompt and the fragment order that produced it.
 

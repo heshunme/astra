@@ -3,6 +3,7 @@ from __future__ import annotations
 import builtins
 import io
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -89,6 +90,90 @@ def test_switch_command(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.
 
     out = capsys.readouterr().out
     assert f"Switched to {second.id}" in out
+
+
+def test_resume_command(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+
+    store = SessionStore()
+    first = store.create(cwd=str(cwd), model="m-1", system_prompt="s-1", name="alpha")
+    second = store.create(cwd=str(cwd), model="m-2", system_prompt="s-2", name="beta")
+    store.save(first)
+    time.sleep(0.01)
+    store.save(second)
+
+    monkeypatch.setattr(builtins, "input", InputFeeder(["/resume", "1", "/exit"]))
+    cli.main(["--cwd", str(cwd)])
+
+    out = capsys.readouterr().out
+    assert "Sessions" in out
+    assert "1. beta" in out
+    assert "2. alpha" in out
+    assert f"Resumed beta ({second.id})" in out
+    assert "Runtime config" in out
+    assert "model=m-2" in out
+    assert "base_url=https://api.openai.com/v1" in out
+    assert "tools=read, write, edit, ls, find, grep, bash" in out
+    assert "s-2" not in out
+
+
+def test_resume_command_rejects_invalid_selection(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+
+    store = SessionStore()
+    session = store.create(cwd=str(cwd), model="m-1", system_prompt="s-1", name="alpha")
+    store.save(session)
+
+    monkeypatch.setattr(builtins, "input", InputFeeder(["/resume", "nope", "/sessions", "/exit"]))
+    cli.main(["--cwd", str(cwd)])
+
+    out = capsys.readouterr().out
+    assert "1. alpha" in out
+    assert "Invalid session number." in out
+    assert "* current session" not in out
+
+
+def test_resume_command_with_no_sessions(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+
+    monkeypatch.setattr(builtins, "input", InputFeeder(["/resume", "/exit"]))
+    cli.main(["--cwd", str(cwd)])
+
+    out = capsys.readouterr().out
+    assert "No sessions" in out
+    assert _saved_session_files(tmp_path) == []
+
+
+def test_resume_command_filters_sessions_to_current_cwd(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    other_cwd = tmp_path / "other-workspace"
+    cwd.mkdir()
+    other_cwd.mkdir()
+
+    store = SessionStore()
+    matching = store.create(cwd=str(cwd), model="m-1", system_prompt="s-1", name="alpha")
+    other = store.create(cwd=str(other_cwd), model="m-2", system_prompt="s-2", name="beta")
+    store.save(matching)
+    time.sleep(0.01)
+    store.save(other)
+
+    monkeypatch.setattr(builtins, "input", InputFeeder(["/resume", "1", "/exit"]))
+    cli.main(["--cwd", str(cwd)])
+
+    out = capsys.readouterr().out
+    assert "1. alpha" in out
+    assert "beta" not in out
+    assert f"Resumed alpha ({matching.id})" in out
+    assert f"({other.id})" not in out
 
 
 def test_save_rename_and_fork_require_saved_session(

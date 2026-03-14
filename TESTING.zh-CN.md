@@ -118,6 +118,7 @@ bash scripts/smoke_cli.sh
 - `/rename`
 - `/save`
 - `/sessions`
+- `/resume`
 - `/switch`
 
 这个脚本默认使用临时工作区和假的 `OPENAI_API_KEY=test-key`，不会要求真实 provider。
@@ -162,6 +163,7 @@ python -m astra --cwd <temp-workspace>
 /base-url
 /base-url http://gateway.local/v1
 /sessions
+/resume
 /fork smoke-copy
 /rename smoke-main
 /save
@@ -177,7 +179,7 @@ python -m astra --cwd <temp-workspace>
 - `/runtime prompt` 是否准确反映激活前后的 prompt 变化
 - `/skill:` 和 `/template:` 是否真的影响最终 assembled prompt
 - `/reload` 后 model/base_url/tools/runtime summary 是否保持一致
-- `fork`、`rename`、`save`、`switch` 是否真的落盘并能恢复
+- `fork`、`rename`、`save`、`switch`、`resume` 是否真的落盘并能恢复
 
 ## 6. 真实 provider 端到端验证
 

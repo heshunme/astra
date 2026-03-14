@@ -87,6 +87,13 @@ def _display_timestamp(value: str) -> str:
     return parsed.strftime("%Y-%m-%d %H:%MZ")
 
 
+def _normalize_cwd(raw_path: str | Path) -> str:
+    try:
+        return str(Path(raw_path).resolve())
+    except OSError:
+        return str(raw_path)
+
+
 def print_sessions(store: SessionStore, current_session_id: str | None = None) -> None:
     sessions = store.list()
     if not sessions:
@@ -147,6 +154,29 @@ def print_tools_summary(agent: Agent) -> None:
     print(f"read.max_lines={agent.runtime_config.tools.read_max_lines}")
     print(f"bash.timeout_seconds={agent.runtime_config.tools.bash_timeout_seconds}")
     print(f"bash.max_output_bytes={agent.runtime_config.tools.bash_max_output_bytes}")
+
+
+def print_runtime_config_summary(agent: Agent) -> None:
+    print("Runtime config")
+    print(f"model={agent.config.model}")
+    print(f"base_url={agent.config.base_url}")
+    print(f"tools={', '.join(agent.tools) or '(none)'}")
+    print(f"read.max_lines={agent.runtime_config.tools.read_max_lines}")
+    print(f"bash.timeout_seconds={agent.runtime_config.tools.bash_timeout_seconds}")
+    print(f"bash.max_output_bytes={agent.runtime_config.tools.bash_max_output_bytes}")
+
+
+def print_resume_sessions(store: SessionStore, current_cwd: Path):
+    normalized_cwd = _normalize_cwd(current_cwd)
+    sessions = [session for session in store.list() if _normalize_cwd(session.cwd) == normalized_cwd]
+    if not sessions:
+        print("No sessions")
+        return []
+
+    print("Sessions")
+    for index, session in enumerate(sessions, start=1):
+        print(f"{index}. {session.name or '(unnamed)'}")
+    return sessions
 
 
 def build_runtime_summary(agent: Agent) -> dict[str, object]:
@@ -524,6 +554,36 @@ def main(
             print(f"Switched to {agent.session.id}")
             return True
 
+        def resume_command(_line: str) -> bool:
+            sessions = print_resume_sessions(store, cwd)
+            if not sessions:
+                return True
+
+            selection = read_cli_line("resume> ").strip()
+            try:
+                session_index = int(selection)
+            except ValueError:
+                print("Invalid session number.")
+                return True
+
+            if session_index < 1 or session_index > len(sessions):
+                print("Invalid session number.")
+                return True
+
+            selected = sessions[session_index - 1]
+            agent.load_session(selected.id)
+            resumed_runtime = clone_resolved_runtime_config(agent.runtime_config)
+            resumed_runtime.model = agent.config.model
+            resumed_runtime.system_prompt = agent.config.system_prompt
+            result = agent.reload_runtime(resumed_runtime)
+            if not result.success:
+                print(f"Failed to resume: {result.message}")
+                return True
+            resumed_name = agent.session.name or "(unnamed)"
+            print(f"Resumed {resumed_name} ({agent.session.id})")
+            print_runtime_config_summary(agent)
+            return True
+
         def fork_command(line: str) -> bool:
             if not agent.has_session:
                 print("No saved session to fork.")
@@ -590,6 +650,9 @@ def main(
         )
         command_registry.register(
             CommandSpec(name="/sessions", usage="/sessions", summary="List saved sessions", handler=sessions_command)
+        )
+        command_registry.register(
+            CommandSpec(name="/resume", usage="/resume", summary="Resume a saved session by number", handler=resume_command)
         )
         command_registry.register(
             CommandSpec(name="/switch", usage="/switch <session-id>", summary="Switch sessions", handler=switch_command)

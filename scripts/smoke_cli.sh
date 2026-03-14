@@ -217,12 +217,30 @@ print(forked)
 '
 }
 
+create_seed_session() {
+  HOME="$HOME_DIR" "$PYTHON_BIN" -c '
+import os
+from pathlib import Path
+
+from astra.session import SessionStore
+
+workspace = Path(os.environ["WORKSPACE"])
+store = SessionStore()
+session = store.create(cwd=str(workspace), model="seed-model", system_prompt="seed-system", name="seed")
+store.save(session)
+print(session.id)
+'
+}
+
 run_local_cli_smoke() {
   local first_output="$TMP_ROOT/cli-first.txt"
   local second_output="$TMP_ROOT/cli-second.txt"
+  local third_output="$TMP_ROOT/cli-third.txt"
   local help_output="$TMP_ROOT/help.txt"
+  local seed_session_id
 
   export PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
+  export WORKSPACE
 
   log_step "Compile sources"
   (cd "$ROOT_DIR" && "$PYTHON_BIN" -m compileall src)
@@ -237,9 +255,10 @@ run_local_cli_smoke() {
   fi
 
   create_workspace
+  seed_session_id="$(create_seed_session)"
 
   log_step "Scripted CLI session"
-  (cd "$ROOT_DIR" && HOME="$HOME_DIR" run_with_input "$first_output" $'/help\n/tools\n/runtime\n/runtime warnings\n/runtime json\n/runtime prompt\n/runtime json prompt\n/model smoke-cli-model\n/base-url http://cli-gateway.local/v1\n/skill:review\n/template:repo-rules\n/runtime prompt\n/reload\n/reload code\n/fork smoke-copy\n/rename smoke-main\n/save\n/sessions\n/exit\n' "$PYTHON_BIN" -m astra --cwd "$WORKSPACE")
+  (cd "$ROOT_DIR" && HOME="$HOME_DIR" run_with_input "$first_output" $'/help\n/tools\n/runtime\n/runtime warnings\n/runtime json\n/runtime prompt\n/runtime json prompt\n/model smoke-cli-model\n/base-url http://cli-gateway.local/v1\n/skill:review\n/template:repo-rules\n/runtime prompt\n/reload\n/reload code\n/fork smoke-copy\n/rename smoke-main\n/save\n/sessions\n/exit\n' "$PYTHON_BIN" -m astra --cwd "$WORKSPACE" --session "$seed_session_id")
 
   assert_contains "$first_output" "Session "
   assert_contains "$first_output" "Tools summary"
@@ -266,9 +285,14 @@ run_local_cli_smoke() {
     exit 1
   fi
 
+  log_step "Session resume smoke"
+  (cd "$ROOT_DIR" && HOME="$HOME_DIR" run_with_input "$second_output" $'/resume\n1\n/exit\n' "$PYTHON_BIN" -m astra --cwd "$WORKSPACE")
+  assert_contains "$second_output" "Runtime config"
+  assert_contains "$second_output" "Resumed "
+
   log_step "Session switch smoke"
-  (cd "$ROOT_DIR" && HOME="$HOME_DIR" run_with_input "$second_output" "/switch ${session_ids[0]}"$'\n/exit\n' "$PYTHON_BIN" -m astra --cwd "$WORKSPACE" --session "${session_ids[1]}")
-  assert_contains "$second_output" "Switched to ${session_ids[0]}"
+  (cd "$ROOT_DIR" && HOME="$HOME_DIR" run_with_input "$third_output" "/switch ${session_ids[0]}"$'\n/exit\n' "$PYTHON_BIN" -m astra --cwd "$WORKSPACE" --session "${session_ids[1]}")
+  assert_contains "$third_output" "Switched to ${session_ids[0]}"
 }
 
 run_live_provider_smoke() {
