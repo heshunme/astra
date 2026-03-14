@@ -106,6 +106,7 @@ These instructions apply to the entire repository tree.
 
 ## Documentation
 - Update `README.md` when changing CLI flags, slash commands, config keys, prompt/skill behavior, or runtime reload behavior.
+- After completing any change, explicitly assess whether `README.md` and `AGENTS.md` need updates, and update them when needed.
 - Keep examples PowerShell-friendly unless demonstrating shell-specific behavior.
 
 ## Git and scope hygiene
