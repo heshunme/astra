@@ -171,6 +171,28 @@ Fast validation (recommended for PR checks):
 .venv\Scripts\python.exe -m pytest -q tests/unit tests/integration -m "not slow and not contract" --cov=astra --cov-fail-under=50
 ```
 
+One-command local smoke for the current CLI/runtime surface:
+
+```bash
+bash scripts/smoke_cli.sh
+```
+
+This script runs `compileall`, CLI help, unit/integration tests excluding contract tests, and a scripted local CLI session that exercises `/tools`, `/runtime`, `/reload`, `/reload code`, session commands, and capability activation without requiring a real provider key.
+
+To add one real end-to-end provider call after the local smoke:
+
+```bash
+bash scripts/smoke_cli.sh --live-provider
+```
+
+`--real` is an alias for `--live-provider`.
+
+For `--live-provider` / `--real`, the script will first use the current shell environment. If a real `OPENAI_API_KEY` is not already set, it will replace the temporary workspace `.env` with a symlink to the repository `.env`, so the live smoke can reuse the same project credentials without exporting them manually. You can also point it at another file:
+
+```bash
+bash scripts/smoke_cli.sh --real --env-file /path/to/.env
+```
+
 Extended validation (recommended for nightly runs):
 
 ```powershell
