@@ -179,9 +179,9 @@ uv pip install -e ".[test]"
 Fast validation (recommended for PR checks):
 
 ```powershell
-.venv\Scripts\python.exe -m compileall src
-.venv\Scripts\python.exe -m astra --help
-.venv\Scripts\python.exe -m pytest -q tests/unit tests/integration -m "not slow and not contract" --cov=astra --cov-fail-under=50
+uv run python -m compileall src
+uv run python -m astra --help
+uv run python -m pytest -q tests/unit tests/integration -m "not slow and not contract" --cov=astra --cov-fail-under=50
 ```
 
 One-command local smoke for the current CLI/runtime surface:
@@ -197,7 +197,7 @@ It runs `compileall`, CLI help, unit/integration tests excluding contract tests,
 Direct Python entrypoint:
 
 ```bash
-.venv/bin/python scripts/smoke_cli.py
+ scripts/smoke_cli.py
 ```
 
 To add one real end-to-end provider call after the local smoke:
@@ -217,7 +217,7 @@ bash scripts/smoke_cli.sh --real --env-file /path/to/.env
 Manual CLI sandbox for hands-on testing:
 
 ```bash
-.venv/bin/python scripts/manual_cli.py
+ scripts/manual_cli.py
 ```
 
 This prepares a temporary workspace with:
@@ -233,5 +233,5 @@ It then launches `python -m astra --cwd <temp-workspace>` so you can manually te
 Extended validation (recommended for nightly runs):
 
 ```powershell
-.venv\Scripts\python.exe -m pytest -q -m "contract or slow"
+uv run python -m pytest -q -m "contract or slow"
 ```

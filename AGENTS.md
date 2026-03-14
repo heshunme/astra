@@ -18,8 +18,8 @@ These instructions apply to the entire repository tree.
 
 ## Commands
 - Syntax check / smoke validation:
-  - `.venv\Scripts\python.exe -m compileall src`
-  - `.venv\Scripts\python.exe -m astra --help`
+  - `uv run python -m compileall src`
+  - `uv run python -m astra --help`
 - Package install/update:
   - `uv pip install -e .`
 - Do not run repo-level `npm` commands for work limited to this package unless explicitly asked.
@@ -81,8 +81,8 @@ These instructions apply to the entire repository tree.
   - Wire agent usage third.
   - Wire CLI commands last.
 - Validation sequence:
-  - `.venv\Scripts\python.exe -m compileall src`
-  - `.venv\Scripts\python.exe -m astra --help`
+  - `uv run python -m compileall src`
+  - `uv run python -m astra --help`
   - Use a local `python -c` smoke check for config/runtime assembly when network access is not needed.
   - For command-path changes, pipe commands into `astra` with a fake `OPENAI_API_KEY` when the flow does not need a real provider call.
   - When piping commands into `astra`, ensure temporary environment overrides such as `HOME` and `OPENAI_API_KEY` apply to the `python -m astra` process, not only to the producer command at the left side of the pipe; prefer exporting them in the same shell before running the pipeline.

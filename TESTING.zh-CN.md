@@ -33,8 +33,8 @@ export OPENAI_API_KEY=test-key
 先跑最基础的两步：
 
 ```bash
-.venv/bin/python -m compileall src
-.venv/bin/python -m astra --help
+ -m compileall src
+ -m astra --help
 ```
 
 这两步主要验证：
@@ -50,7 +50,7 @@ export OPENAI_API_KEY=test-key
 这是日常最推荐的一组：
 
 ```bash
-.venv/bin/python -m pytest -q tests/unit tests/integration -m "not slow and not contract" --cov=astra --cov-fail-under=50
+ -m pytest -q tests/unit tests/integration -m "not slow and not contract" --cov=astra --cov-fail-under=50
 ```
 
 这组测试主要覆盖：
@@ -67,7 +67,7 @@ export OPENAI_API_KEY=test-key
 如果你不关心覆盖率门槛，或者想顺手把慢一些的集成也跑进去：
 
 ```bash
-.venv/bin/python -m pytest -q tests/unit tests/integration -m "not contract"
+ -m pytest -q tests/unit tests/integration -m "not contract"
 ```
 
 ### 扩展验证
@@ -75,8 +75,8 @@ export OPENAI_API_KEY=test-key
 如果要单独检查慢测试或 contract 测试：
 
 ```bash
-.venv/bin/python -m pytest -q tests/integration/test_cli_smoke_subprocess.py
-.venv/bin/python -m pytest -q -m "contract or slow"
+ -m pytest -q tests/integration/test_cli_smoke_subprocess.py
+ -m pytest -q -m "contract or slow"
 ```
 
 说明：
@@ -130,7 +130,7 @@ bash scripts/smoke_cli.sh
 ### 创建手工沙箱
 
 ```bash
-.venv/bin/python scripts/manual_cli.py
+ scripts/manual_cli.py
 ```
 
 这个脚本会准备临时工作区并启动：
