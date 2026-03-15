@@ -3,10 +3,11 @@
 These instructions apply to the entire repository tree.
 
 ## Purpose
-- This package is a Python replica of the core `pi-mono` coding-agent flow.
-- Keep scope focused on: CLI, session persistence, tool-calling loop, runtime reload, and OpenAI-compatible provider behavior.
+- This package is a Python coding-agent runtime.
+- Keep scope focused on: core loop, runtime reload, CLI/session adaptation, and higher-level artifact loading.
 - Do not add TUI or unrelated monorepo concepts unless explicitly requested.
-- Preserve the current split where `agent-core` owns runtime behavior and CLI owns terminal/session adaptation.
+- Preserve the split between reusable engine behavior and higher-level application policy.
+- Project evolution goals and architecture direction are documented in `docs/evolution_strategy.md`.
 
 ## Environment
 - Use `uv` for local environment management.
@@ -74,7 +75,7 @@ These instructions apply to the entire repository tree.
 - Prefer command registries and focused handlers over growing `if/elif` command trees.
 - Keep runtime state layers explicit: persisted config, process runtime config, session-scoped temporary state.
 - Keep the ownership boundary explicit:
-  - `src/astra/agent.py` owns state machine, event stream, runtime apply/inspect, tool loop, and extension command semantics.
+  - `src/astra/agent.py` owns the state machine, event stream, runtime apply/inspect, tool loop, and extension command semantics in the current codebase.
   - `src/astra/cli.py` owns config loading, session store interaction, terminal rendering, and built-in slash commands.
 
 ## Validation expectations
