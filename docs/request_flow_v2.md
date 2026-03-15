@@ -3,6 +3,69 @@
 本文基于当前代码实现（`src/astra/*.py`）描述真实请求链路。  
 旧文档 `docs/request_flow.md` 保留不变，本文件作为更新版本。
 
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant CLI as CLI
+    participant CFG as ConfigManager / env
+    participant RT as CapabilityRuntime
+    participant A as Agent
+    participant P as Provider
+    participant T as Tools
+    participant S as SessionStore
+
+    U->>CLI: 启动 astra / 输入一行
+    CLI->>CFG: 读取 .env + YAML + CLI args
+    CFG-->>CLI: ResolvedRuntimeConfig
+    CLI->>A: apply_runtime_config(runtime_config)
+    A->>RT: reload(runtime_config)
+    RT-->>A: RuntimeSnapshot(tools/prompts/skills/diagnostics)
+
+    alt 指定 --session
+        CLI->>S: load(session_id)
+        S-->>CLI: Session
+        CLI->>A: restore(snapshot)
+        CLI->>A: apply_runtime_config(restored runtime)
+    end
+
+    U->>CLI: 普通输入或 slash 命令
+    alt CLI built-in slash 命令
+        CLI->>CLI: dispatch(command)
+    else Agent extension 命令
+        CLI->>A: try_handle_extension_command()
+        alt /skill:<name> <request>
+            A->>A: 改写为本轮 user message
+        else /skill:<name>
+            A->>A: 武装下一条普通输入
+        else /template:<name>
+            A->>A: 激活 template
+        end
+    else 普通用户请求
+        CLI->>A: prompt(text)
+        A->>A: consume pending skill
+        A->>A: append user message
+
+        loop provider/tool 闭环，直到无 tool calls
+            A->>P: stream_chat(messages, tools)
+            P-->>A: text_delta / tool_call_delta / usage / done
+            A->>A: append assistant message
+
+            alt assistant 返回 tool calls
+                loop 每个 tool call
+                    A->>T: execute_tool(call, context)
+                    T-->>A: ToolResult
+                    A->>A: append tool_result message
+                end
+            else 无 tool calls
+                A-->>CLI: AgentRunResult
+            end
+        end
+
+        CLI->>S: persist_agent_state(create_if_needed=True)
+        S-->>CLI: session.json 已更新
+    end
+```
+
 ## 1. 启动与配置解析
 
 入口：`python -m astra` -> `astra.cli.main()`

@@ -42,6 +42,8 @@ Extension commands are handled by the core, not the CLI command registry:
 - `/skill:<name> [request]`
 - `/template:<name>`
 
+For a current architecture survey in Chinese, see `docs/architecture.zh-CN.md`.
+
 ## Session storage
 
 Sessions are stored under `~/.astra-python/sessions` by default.
