@@ -57,6 +57,12 @@ def _write_skill(cwd: Path, name: str, summary: str = "Review checklist", when_t
     (skill_dir / "checklist.md").write_text(f"{name} prompt body", encoding="utf-8")
 
 
+def _write_template(cwd: Path, name: str, body: str = "Template body") -> None:
+    prompt_dir = cwd / ".astra" / "prompts"
+    prompt_dir.mkdir(parents=True, exist_ok=True)
+    (prompt_dir / f"{name}.md").write_text(body, encoding="utf-8")
+
+
 def test_runtime_json_prompt_command(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     cwd = tmp_path / "workspace"
     cwd.mkdir()
@@ -81,8 +87,141 @@ def test_help_includes_extension_commands(
     cli.main(["--cwd", str(cwd)])
 
     out = capsys.readouterr().out
+    assert "/skills" in out
+    assert "/templates" in out
     assert "/skill:<name> [request]" in out
     assert "/template:<name>" in out
+
+
+def test_skills_command_lists_available_skills_with_descriptions(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+    _write_skill(cwd, "review", summary="Review checklist", when_to_use="Use for code review requests.")
+
+    monkeypatch.setattr(builtins, "input", InputFeeder(["/skills", "/exit"]))
+    cli.main(["--cwd", str(cwd)])
+
+    out = capsys.readouterr().out
+    assert "Skills" in out
+    assert "- review: Review checklist" in out
+    assert "Use when: Use for code review requests." in out
+    assert str(cwd / ".astra" / "skills" / "review" / "checklist.md") not in out
+
+
+def test_skills_command_prints_empty_state_when_no_skills_exist(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+
+    monkeypatch.setattr(builtins, "input", InputFeeder(["/skills", "/exit"]))
+    cli.main(["--cwd", str(cwd)])
+
+    out = capsys.readouterr().out
+    assert "Skills" in out
+    assert "No skills available." in out
+
+
+def test_skills_command_hides_history_only_skills_after_restore(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+    _write_skill(cwd, "review")
+
+    def fake_stream_chat(self, _request):
+        yield ProviderEvent(type="text_delta", delta="ok")
+        yield ProviderEvent(type="done")
+
+    monkeypatch.setattr(OpenAICompatibleProvider, "stream_chat", fake_stream_chat)
+    monkeypatch.setattr(builtins, "input", InputFeeder(["hello", "/exit"]))
+    cli.main(["--cwd", str(cwd)])
+
+    skill_dir = cwd / ".astra" / "skills" / "review"
+    (skill_dir / "checklist.md").unlink()
+    (skill_dir / "skill.yaml").unlink()
+    skill_dir.rmdir()
+
+    saved_session = json.loads(_saved_session_files(tmp_path)[0].read_text(encoding="utf-8"))
+    monkeypatch.setattr(builtins, "input", InputFeeder(["/skills", "/exit"]))
+    cli.main(["--cwd", str(cwd), "--session", saved_session["id"]])
+
+    out = capsys.readouterr().out
+    assert "Skills" in out
+    assert "No skills available." in out
+    assert "- review: Review checklist" not in out
+
+
+def test_skills_command_shows_read_disabled_note_instead_of_listing_skills(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+    _write_skill(cwd, "review", summary="Review checklist")
+    (cwd / ".astra").mkdir(exist_ok=True)
+    (cwd / ".astra" / "config.yaml").write_text(
+        """
+tools:
+  enabled: [write, edit, ls, find, grep, bash]
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(builtins, "input", InputFeeder(["/skills", "/exit"]))
+    cli.main(["--cwd", str(cwd)])
+
+    out = capsys.readouterr().out
+    assert "/skill:<name> is unavailable because the read tool is disabled." in out
+    assert "Enable the read tool to use discovered skills." in out
+    assert "- review: Review checklist" not in out
+
+
+def test_templates_command_lists_available_templates(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+    _write_template(cwd, "repo-rules")
+
+    monkeypatch.setattr(builtins, "input", InputFeeder(["/templates", "/exit"]))
+    cli.main(["--cwd", str(cwd)])
+
+    out = capsys.readouterr().out
+    assert "Templates" in out
+    assert "- repo-rules" in out
+
+
+def test_templates_command_marks_active_templates(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+    _write_template(cwd, "repo-rules")
+
+    monkeypatch.setattr(builtins, "input", InputFeeder(["/template:repo-rules", "/templates", "/exit"]))
+    cli.main(["--cwd", str(cwd)])
+
+    out = capsys.readouterr().out
+    assert "Activated template: repo-rules" in out
+    assert "- repo-rules (active)" in out
+
+
+def test_listing_commands_do_not_create_sessions(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+    _write_skill(cwd, "review")
+    _write_template(cwd, "repo-rules")
+
+    monkeypatch.setattr(builtins, "input", InputFeeder(["/skills", "/templates", "/exit"]))
+    cli.main(["--cwd", str(cwd)])
+
+    _out = capsys.readouterr().out
+    assert _saved_session_files(tmp_path) == []
 
 
 def test_model_and_base_url_commands(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

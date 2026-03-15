@@ -164,6 +164,36 @@ def print_tools_summary(agent: Agent) -> None:
     print(f"bash.max_output_bytes={summary['tool_defaults']['bash_max_output_bytes']}")
 
 
+def print_skills_list(agent: Agent) -> None:
+    skills = agent.available_skills()
+    print("Skills")
+    if "read" not in agent.tools and skills:
+        print("/skill:<name> is unavailable because the read tool is disabled.")
+        print("Enable the read tool to use discovered skills.")
+        return
+    if not skills:
+        print("No skills available.")
+        return
+
+    for entry in skills:
+        print(f"- {entry.name}: {entry.summary}")
+        if entry.when_to_use:
+            print(f"  Use when: {entry.when_to_use}")
+
+
+def print_templates_list(agent: Agent) -> None:
+    templates = agent.runtime.list_template_names()
+    active_templates = set(agent.active_templates)
+    print("Templates")
+    if not templates:
+        print("No templates available.")
+        return
+
+    for name in templates:
+        suffix = " (active)" if name in active_templates else ""
+        print(f"- {name}{suffix}")
+
+
 def print_runtime_config_summary(agent: Agent) -> None:
     summary = agent.inspect_runtime()
     print("Runtime config")
@@ -557,6 +587,20 @@ def main(
             print_tools_summary(agent)
             return True
 
+        def skills_command(line: str) -> bool:
+            _command_name, _, remainder = line.partition(" ")
+            if remainder.strip():
+                return False
+            print_skills_list(agent)
+            return True
+
+        def templates_command(line: str) -> bool:
+            _command_name, _, remainder = line.partition(" ")
+            if remainder.strip():
+                return False
+            print_templates_list(agent)
+            return True
+
         def runtime_command(line: str) -> bool:
             _command_name, _, remainder = line.partition(" ")
             normalized_remainder = remainder.strip()
@@ -668,6 +712,12 @@ def main(
         )
         command_registry.register(
             CommandSpec(name="/tools", usage="/tools", summary="Show enabled tools and defaults", handler=tools_command)
+        )
+        command_registry.register(
+            CommandSpec(name="/skills", usage="/skills", summary="List available skills", handler=skills_command)
+        )
+        command_registry.register(
+            CommandSpec(name="/templates", usage="/templates", summary="List available templates", handler=templates_command)
         )
         command_registry.register(
             CommandSpec(name="/runtime", usage="/runtime | /runtime warnings | /runtime json | /runtime prompt | /runtime json prompt", summary="Show capability runtime state", handler=runtime_command)

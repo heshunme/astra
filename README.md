@@ -35,7 +35,7 @@ The runtime is now split into two layers:
 - `agent-core`
   - Owns conversation state, runtime state, prompt assembly, skill/template behavior, tool orchestration, and event emission
 - CLI
-  - Owns config loading, session persistence, terminal I/O, and built-in interactive commands such as `/model`, `/base-url`, `/reload`, `/sessions`, and `/exit`
+  - Owns config loading, session persistence, terminal I/O, and built-in interactive commands such as `/model`, `/base-url`, `/skills`, `/templates`, `/reload`, `/sessions`, and `/exit`
 
 Extension commands are handled by the core, not the CLI command registry:
 
@@ -46,7 +46,7 @@ Extension commands are handled by the core, not the CLI command registry:
 
 Sessions are stored under `~/.astra-python/sessions` by default.
 
-Starting the CLI does not create a saved session by itself. A new session is written only after you send a normal user message to the model. Slash commands such as `/help`, `/runtime`, `/tools`, `/model`, `/base-url`, `/reload`, `/save`, `/rename`, and `/fork` do not create a new session on their own.
+Starting the CLI does not create a saved session by itself. A new session is written only after you send a normal user message to the model. Slash commands such as `/help`, `/runtime`, `/tools`, `/skills`, `/templates`, `/model`, `/base-url`, `/reload`, `/save`, `/rename`, and `/fork` do not create a new session on their own.
 
 For a new conversation, the first normal user prompt becomes the default saved session name until you change it with `/rename`.
 
@@ -129,6 +129,10 @@ Use runtime inspection commands to verify what the agent is currently using.
 
 - `/tools`
   - Enabled tools and tool default limits (`read.max_lines`, bash timeout, bash output cap)
+- `/skills`
+  - Available skills for the current runtime, including each skill summary and optional `when_to_use` guidance
+- `/templates`
+  - Available templates for the current runtime, with active templates marked in the list
 
 - `/runtime`
   - Human-readable runtime summary
@@ -163,6 +167,8 @@ This is the preferred way to check whether config, prompt files, the generated s
 - `/model [name]`
 - `/base-url [url]`
 - `/tools`
+- `/skills`
+- `/templates`
 - `/runtime`
 - `/runtime warnings`
 - `/runtime json`
@@ -183,6 +189,10 @@ This is the preferred way to check whether config, prompt files, the generated s
 `/save`, `/rename`, and `/fork` require an existing saved session. If you have only used slash commands in the current CLI process, they will print a message instead of creating an empty session.
 
 Use `/resume` to interactively list saved sessions by number and reopen one without typing a session id. After resuming, Astra prints the effective runtime configuration for that session without replaying message history.
+
+Use `/skills` to inspect the currently usable skill catalog from the CLI. If skills are discovered but the `read` tool is disabled, Astra prints a note instead of advertising unusable `/skill:<name>` actions.
+
+Use `/templates` to list discovered templates and see which ones are already active in the current process session.
 
 Use `/runtime prompt` for a human-readable view of the fully assembled system prompt and the fragment order that produced it.
 

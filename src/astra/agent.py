@@ -111,6 +111,11 @@ class Agent:
     def available_skill_names(self) -> list[str]:
         return [entry.name for entry in self.runtime_state.skill_catalog_snapshot if not entry.history_only]
 
+    def available_skills(self) -> list[SkillCatalogEntry]:
+        return clone_skill_catalog(
+            [entry for entry in self.runtime_state.skill_catalog_snapshot if not entry.history_only]
+        )
+
     def history_only_skill_names(self) -> list[str]:
         return [entry.name for entry in self.runtime_state.skill_catalog_snapshot if entry.history_only]
 
