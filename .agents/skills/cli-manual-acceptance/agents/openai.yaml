@@ -1,0 +1,4 @@
+interface:
+  display_name: "CLI Manual Acceptance"
+  short_description: "Guide Astra CLI manual acceptance checks"
+  default_prompt: "Use $cli-manual-acceptance to run the Astra CLI manual acceptance flow for this change."

@@ -29,6 +29,25 @@ uv pip install -e .
 astra --model gpt-4o-mini --base-url http://your-gateway/v1
 ```
 
+## Codex sandbox
+
+If you run this repository inside a Codex `workspace-write` sandbox, make sure Codex is allowed to both reach the network and write to the directories that `uv` uses for caches and tool data. Add this to your Codex `config.toml`:
+
+```toml
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+
+[sandbox_workspace_write]
+network_access = true
+writable_roots = [
+  "/tmp",
+  "~/.cache/uv",
+  "~/.local/share/uv",
+]
+```
+
+Without those settings, commands such as `uv run python -m compileall src`, `uv run python -m astra --help`, or `uv pip install -e .` can fail with network, cache-lock, or read-only cache directory errors even when Astra itself is fine.
+
 ## Architecture
 The project is in a transition state, but the code now follows a three-layer shape:
 
