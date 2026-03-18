@@ -42,7 +42,6 @@ network_access = true
 writable_roots = [
   "/tmp",
   "~/.cache/uv",
-  "~/.local/share/uv",
 ]
 ```
 
@@ -56,7 +55,7 @@ The project is in a transition state, but the code now follows a three-layer sha
 - `coding-agent`
   - Owns runtime reload application, prompt assembly, skill/template behavior, runtime inspection, and other coding-agent-specific policy
 - CLI
-  - Owns config loading, session persistence, terminal I/O, and slash-command parsing for interactive commands such as `/model`, `/base-url`, `/skills`, `/templates`, `/reload`, `/sessions`, `/skill:<name>`, and `/template:<name>`
+  - Owns config loading, session persistence, terminal I/O, and slash-command parsing for interactive commands such as `/model`, `/base-url`, `/skills`, `/templates`, `/reload`, `/sessions`, `/skill:<name>`, and `/template:<name> <request>`
 
 Longer-term architecture direction, including core-engine goals and self-evolution layering, is documented in `docs/evolution_strategy.md`.
 
@@ -77,7 +76,6 @@ For a new conversation, the first normal user prompt becomes the default saved s
 
 Saved sessions persist both message history and the agent snapshot needed to restore runtime-only state for that session, including:
 
-- active templates
 - pending one-shot skill trigger
 - per-session runtime values such as `model`, `base_url`, and `system_prompt`
 
@@ -157,7 +155,7 @@ Use runtime inspection commands to verify what the agent is currently using.
 - `/skills`
   - Available skills for the current runtime, including each skill summary and optional `when_to_use` guidance
 - `/templates`
-  - Available templates for the current runtime, with active templates marked in the list
+  - Available templates for the current runtime
 
 - `/runtime`
   - Human-readable runtime summary
@@ -184,7 +182,7 @@ assembled_with_boundaries:
 ...
 ```
 
-This is the preferred way to check whether config, prompt files, the generated skill catalog, and in-session `/template:` changes match the final prompt sent to the provider.
+This is the preferred way to check whether config, prompt files, and the generated skill catalog match the final system prompt sent to the provider.
 
 ## Supported commands
 
@@ -209,7 +207,7 @@ This is the preferred way to check whether config, prompt files, the generated s
 - `/save`
 - `/exit`
 - `/skill:<name> [request]`
-- `/template:<name>`
+- `/template:<name> <request>`
 
 `/save`, `/rename`, and `/fork` require an existing saved session. If you have only used slash commands in the current CLI process, they will print a message instead of creating an empty session.
 
@@ -217,13 +215,15 @@ Use `/resume` to interactively list saved sessions by number and reopen one with
 
 Use `/skills` to inspect the currently usable skill catalog from the CLI. If skills are discovered but the `read` tool is disabled, Astra prints a note instead of advertising unusable `/skill:<name>` actions.
 
-Use `/templates` to list discovered templates and see which ones are already active in the current process session.
+Use `/templates` to list discovered templates.
 
 Use `/runtime prompt` for a human-readable view of the fully assembled system prompt and the fragment order that produced it.
 
 Use `/runtime json prompt` for a machine-readable version of the same inspection data.
 
 `/skill:<name> <request>` rewrites that input into a normal user message for a single turn. `/skill:<name>` without a request arms the next normal user message once, then clears itself. In both cases the rewritten natural-language request is what gets stored in session history, while the raw slash command is preserved only in message metadata.
+
+`/template:<name> <request>` rewrites that input into a normal user message for a single turn. The template body is injected at the top of that rewritten user message, and the raw slash command plus template metadata are preserved in message metadata. It does not modify the system prompt or create any persistent active-template state.
 
 In non-interactive mode, for example `python -m astra "hello"`, prompt failures exit with status code `1`.
 

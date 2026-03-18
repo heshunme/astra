@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 
@@ -96,7 +97,6 @@ def test_session_load_preserves_agent_snapshot(tmp_path: Path) -> None:
                 system_prompt="sys",
             ),
             skill_catalog_snapshot=[],
-            templates=["repo-rules"],
             pending_skill_trigger=PendingSkillTriggerState(name="review", raw_command="/skill:review"),
         ),
     )
@@ -106,6 +106,49 @@ def test_session_load_preserves_agent_snapshot(tmp_path: Path) -> None:
 
     assert loaded.agent_snapshot is not None
     assert loaded.agent_snapshot.runtime.runtime_config.base_url == "http://gateway/v1"
-    assert loaded.agent_snapshot.runtime.templates == ["repo-rules"]
     assert loaded.agent_snapshot.runtime.pending_skill_trigger is not None
     assert loaded.agent_snapshot.runtime.pending_skill_trigger.name == "review"
+
+
+def test_session_load_ignores_legacy_template_runtime_state(tmp_path: Path) -> None:
+    store = SessionStore(base_dir=tmp_path)
+    session = store.create(cwd="/repo", model="gpt-test", system_prompt="sys", name="demo")
+    payload = {
+        "id": session.id,
+        "name": session.name,
+        "cwd": session.cwd,
+        "created_at": session.created_at,
+        "updated_at": session.updated_at,
+        "model": session.model,
+        "system_prompt": session.system_prompt,
+        "messages": [],
+        "skill_catalog_snapshot": [],
+        "agent_snapshot": {
+            "conversation": {"messages": []},
+            "runtime": {
+                "cwd": "/repo",
+                "runtime_config": {
+                    "model": "gpt-test",
+                    "base_url": "http://gateway/v1",
+                    "system_prompt": "sys",
+                    "tools": {
+                        "enabled_tools": ["read", "write", "edit", "ls", "find", "grep", "bash"],
+                        "read_max_lines": 400,
+                        "bash_timeout_seconds": 60,
+                        "bash_max_output_bytes": 32768,
+                    },
+                    "prompts": {"order": ["builtin:base", "config:system"]},
+                    "capabilities": {"prompts": {"paths": []}, "skills": {"paths": []}},
+                },
+                "skill_catalog_snapshot": [],
+                "templates": ["repo-rules"],
+                "pending_skill_trigger": None,
+            },
+        },
+    }
+    (tmp_path / f"{session.id}.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    loaded = store.load(session.id)
+
+    assert loaded.agent_snapshot is not None
+    assert loaded.agent_snapshot.runtime.runtime_config.base_url == "http://gateway/v1"

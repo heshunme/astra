@@ -92,7 +92,7 @@ def test_help_includes_extension_commands(
     assert "/skills" in out
     assert "/templates" in out
     assert "/skill:<name> [request]" in out
-    assert "/template:<name>" in out
+    assert "/template:<name> <request>" in out
 
 
 def test_skills_command_lists_available_skills_with_descriptions(
@@ -196,7 +196,7 @@ def test_templates_command_lists_available_templates(
     assert "- repo-rules" in out
 
 
-def test_templates_command_marks_active_templates(
+def test_template_command_requires_inline_request(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cwd = tmp_path / "workspace"
@@ -207,8 +207,10 @@ def test_templates_command_marks_active_templates(
     cli.main(["--cwd", str(cwd)])
 
     out = capsys.readouterr().out
-    assert "Activated template: repo-rules" in out
-    assert "- repo-rules (active)" in out
+    assert "Usage: /template:<name> <request>" in out
+    assert "- repo-rules" in out
+    assert "(active)" not in out
+    assert _saved_session_files(tmp_path) == []
 
 
 def test_listing_commands_do_not_create_sessions(
@@ -514,12 +516,54 @@ def test_inline_skill_command_rewrites_prompt_and_persists_metadata(
     assert "Please use the skill 'review' for this turn only." in data["messages"][0]["content"]
 
 
+def test_inline_template_command_rewrites_prompt_and_persists_metadata(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+    _write_template(cwd, "repo-rules", body="Use concise bullet points.")
+    requests = []
+
+    def fake_stream_chat(self, request):
+        requests.append(request)
+        yield ProviderEvent(type="text_delta", delta="ok")
+        yield ProviderEvent(type="done")
+
+    monkeypatch.setattr(OpenAICompatibleProvider, "stream_chat", fake_stream_chat)
+    monkeypatch.setattr(
+        builtins,
+        "input",
+        InputFeeder(["/template:repo-rules Review src/demo.py for issues.", "/exit"]),
+    )
+
+    cli.main(["--cwd", str(cwd)])
+
+    out = capsys.readouterr().out
+    assert "ok" in out
+    assert requests
+    assert "Use concise bullet points." not in str(requests[0].messages[0]["content"])
+    assert "Please follow the template instructions below for this turn only." in str(requests[0].messages[1]["content"])
+    assert "Template: repo-rules" in str(requests[0].messages[1]["content"])
+    assert "Use concise bullet points." in str(requests[0].messages[1]["content"])
+
+    saved_sessions = _saved_session_files(tmp_path)
+    assert len(saved_sessions) == 1
+    data = json.loads(saved_sessions[0].read_text(encoding="utf-8"))
+    assert data["messages"][0]["metadata"]["raw_user_input"] == "/template:repo-rules Review src/demo.py for issues."
+    assert data["messages"][0]["metadata"]["template_trigger"]["name"] == "repo-rules"
+    assert "Please follow the template instructions below for this turn only." in data["messages"][0]["content"]
+
+
 def test_cli_extension_commands_do_not_use_agent_string_dispatch(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cwd = tmp_path / "workspace"
     cwd.mkdir()
     _write_template(cwd, "repo-rules")
+
+    def fake_stream_chat(self, _request):
+        yield ProviderEvent(type="text_delta", delta="ok")
+        yield ProviderEvent(type="done")
 
     class NoStringDispatchAgent(Agent):
         def try_handle_extension_command(self, raw_input: str, *, on_event=None):
@@ -528,12 +572,49 @@ def test_cli_extension_commands_do_not_use_agent_string_dispatch(
     def agent_factory(config: AgentConfig, runtime: CapabilityRuntime) -> Agent:
         return NoStringDispatchAgent(config, runtime)
 
-    monkeypatch.setattr(builtins, "input", InputFeeder(["/template:repo-rules", "/templates", "/exit"]))
+    monkeypatch.setattr(OpenAICompatibleProvider, "stream_chat", fake_stream_chat)
+    monkeypatch.setattr(
+        builtins,
+        "input",
+        InputFeeder(["/template:repo-rules Review src/demo.py for issues.", "/templates", "/exit"]),
+    )
     cli.main(["--cwd", str(cwd)], agent_factory=agent_factory)
 
     out = capsys.readouterr().out
-    assert "Activated template: repo-rules" in out
-    assert "- repo-rules (active)" in out
+    assert "ok" in out
+    assert "- repo-rules" in out
+    assert "(active)" not in out
+
+
+def test_template_command_does_not_consume_pending_skill(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+    _write_skill(cwd, "review", summary="Review checklist")
+    _write_template(cwd, "repo-rules", body="Use concise bullet points.")
+    requests = []
+
+    def fake_stream_chat(self, request):
+        requests.append(request)
+        yield ProviderEvent(type="text_delta", delta="ok")
+        yield ProviderEvent(type="done")
+
+    monkeypatch.setattr(OpenAICompatibleProvider, "stream_chat", fake_stream_chat)
+    monkeypatch.setattr(
+        builtins,
+        "input",
+        InputFeeder(["/skill:review", "/template:repo-rules Review src/demo.py for issues.", "/runtime", "/exit"]),
+    )
+
+    cli.main(["--cwd", str(cwd)])
+
+    out = capsys.readouterr().out
+    assert "Next message will use skill: review" in out
+    assert "skills.pending=review" in out
+    assert len(requests) == 1
+    assert "Please use the skill 'review' for this turn only." not in str(requests[0].messages[1]["content"])
+    assert "Please follow the template instructions below for this turn only." in str(requests[0].messages[1]["content"])
 
 
 def test_cli_falls_back_to_custom_agent_extension_commands(
@@ -638,6 +719,21 @@ def test_runtime_prompt_shows_skill_catalog_without_loading_skill_body(
     assert "Skill catalog for this session" in out
     assert "Use for code review requests." in out
     assert "review prompt body" not in out
+
+
+def test_runtime_prompt_does_not_include_template_prompt_body(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+    _write_template(cwd, "repo-rules", body="Use concise bullet points.")
+
+    monkeypatch.setattr(builtins, "input", InputFeeder(["/runtime prompt", "/exit"]))
+    cli.main(["--cwd", str(cwd)])
+
+    out = capsys.readouterr().out
+    assert "Use concise bullet points." not in out
+    assert "prompt:repo-rules" not in out
 
 
 def test_skill_command_rejects_history_only_skill_after_resume(

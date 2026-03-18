@@ -220,6 +220,74 @@ prompt_files:
     assert plain_metadata is None
 
 
+def test_agent_run_template_executes_through_typed_service_api(tmp_path: Path, runtime_config_factory) -> None:
+    cwd = tmp_path / "workspace"
+    prompt_dir = cwd / ".astra" / "prompts"
+    prompt_dir.mkdir(parents=True)
+    (prompt_dir / "repo-rules.md").write_text("Use concise bullet points.", encoding="utf-8")
+
+    agent = _build_agent(cwd, runtime_config_factory())
+    provider = RecordingProvider([ProviderEvent(type="text_delta", delta="done"), ProviderEvent(type="done")])
+    agent.provider = provider
+
+    result = agent.run_template(
+        "repo-rules",
+        "Review src/demo.py for issues.",
+        "/template:repo-rules Review src/demo.py for issues.",
+    )
+
+    assert result.error is None
+    assert provider.requests
+    sent_messages = provider.requests[0].messages
+    assert sent_messages[0]["role"] == "system"
+    assert "Use concise bullet points." not in str(sent_messages[0]["content"])
+    assert sent_messages[1]["role"] == "user"
+    assert "Please follow the template instructions below for this turn only." in str(sent_messages[1]["content"])
+    assert "Template: repo-rules" in str(sent_messages[1]["content"])
+    assert "Use concise bullet points." in str(sent_messages[1]["content"])
+    assert agent.messages[0].metadata["raw_user_input"] == "/template:repo-rules Review src/demo.py for issues."
+    assert agent.messages[0].metadata["template_trigger"]["name"] == "repo-rules"
+
+
+def test_agent_run_template_does_not_consume_pending_skill(tmp_path: Path, runtime_config_factory) -> None:
+    cwd = tmp_path / "workspace"
+    prompt_dir = cwd / ".astra" / "prompts"
+    skill_dir = cwd / ".astra" / "skills" / "review"
+    prompt_dir.mkdir(parents=True)
+    skill_dir.mkdir(parents=True)
+    (prompt_dir / "repo-rules.md").write_text("Use concise bullet points.", encoding="utf-8")
+    (skill_dir / "skill.yaml").write_text(
+        """
+name: review
+summary: Review checklist
+prompt_files:
+  - checklist.md
+""".strip(),
+        encoding="utf-8",
+    )
+    (skill_dir / "checklist.md").write_text("Review checklist prompt body.", encoding="utf-8")
+
+    agent = _build_agent(cwd, runtime_config_factory())
+    provider = RecordingProvider([ProviderEvent(type="text_delta", delta="done"), ProviderEvent(type="done")])
+    agent.provider = provider
+    success, message = agent.arm_skill("review", "/skill:review")
+
+    assert success
+    assert message == "Next message will use skill: review"
+
+    result = agent.run_template(
+        "repo-rules",
+        "Review src/demo.py for issues.",
+        "/template:repo-rules Review src/demo.py for issues.",
+    )
+
+    assert result.error is None
+    assert agent.pending_skill_name == "review"
+    sent_messages = provider.requests[0].messages
+    assert "Please use the skill 'review' for this turn only." not in str(sent_messages[1]["content"])
+    assert "Please follow the template instructions below for this turn only." in str(sent_messages[1]["content"])
+
+
 def test_agent_snapshot_restore_round_trip_preserves_runtime_state(tmp_path: Path, runtime_config_factory) -> None:
     cwd = tmp_path / "workspace"
     prompt_dir = cwd / ".astra" / "prompts"
@@ -240,7 +308,6 @@ prompt_files:
 
     agent = _build_agent(cwd, runtime_config_factory())
     agent.replace_messages([Message(role="user", content="hello")])
-    agent.activate_template("repo-rules")
     agent.arm_skill("review", "/skill:review")
 
     snapshot = agent.snapshot()
@@ -248,7 +315,6 @@ prompt_files:
     restored.restore(snapshot)
 
     assert restored.messages[0].content == "hello"
-    assert restored.active_templates == ["repo-rules"]
     assert restored.pending_skill_name == "review"
     assert restored.runtime_config.model == agent.runtime_config.model
 

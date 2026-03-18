@@ -23,7 +23,7 @@ uv pip install -e ".[test]"
 如果你是在 Codex 的 `workspace-write` 沙箱里执行这些命令，建议先确认 `config.toml` 已允许：
 
 - `[sandbox_workspace_write].network_access = true`
-- `uv` 会写到的缓存或工具目录已经包含在 `writable_roots` 中，例如 `~/.cache/uv`、`~/.local/share/uv`，以及你实际使用的临时目录
+- `uv` 会写到的缓存或工具目录已经包含在 `writable_roots` 中，例如 `~/.cache/uv`，以及你实际使用的临时目录
 
 本地 smoke 和大多数自动化测试不需要真实 provider，但 CLI 启动路径要求存在 `OPENAI_API_KEY`。因此可以先设置一个假的值：
 

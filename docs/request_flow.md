@@ -90,8 +90,7 @@ REPL 模式每次读入一行后：
 
 1. 先取 runtime 默认片段顺序（`prompts.order`）。  
 2. 再注入“session skill catalog”文本（仅目录和说明，不含 skill 正文）。  
-3. 再拼接当前会话已激活 template（`/template:<name>`）。  
-4. 去重后用空行拼接，结果写入 `current_system_prompt`。  
+3. 去重后用空行拼接，结果写入 `current_system_prompt`。  
 
 `/runtime prompt` 与 `/runtime json prompt` 都复用这条组装链路。
 
@@ -99,7 +98,7 @@ REPL 模式每次读入一行后：
 
 1. `/skill:<name> <request>`：立即改写成普通用户文本后发起本轮请求。  
 2. `/skill:<name>`：仅“武装”下一条普通输入，消费一次后清除。  
-3. `/template:<name>`：激活模板 prompt 片段，影响后续请求的 system prompt。  
+3. `/template:<name> <request>`：立即改写成普通用户文本后发起本轮请求，template 正文插入到该条 user message 头部。  
 4. skill 触发依赖 `read` 工具；若 `read` 被禁用，则 `/skill:` 返回错误提示。
 
 ## 9. 会话持久化关键点

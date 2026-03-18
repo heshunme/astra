@@ -105,7 +105,6 @@ class AgentRuntimeState:
     cwd: str
     runtime_config: ResolvedRuntimeConfig
     skill_catalog_snapshot: list[SkillCatalogEntry] = field(default_factory=list)
-    templates: list[str] = field(default_factory=list)
     pending_skill_trigger: PendingSkillTriggerState | None = None
 
 
@@ -211,7 +210,6 @@ def clone_agent_snapshot(snapshot: AgentSnapshot) -> AgentSnapshot:
             cwd=snapshot.runtime.cwd,
             runtime_config=clone_resolved_runtime_config(snapshot.runtime.runtime_config),
             skill_catalog_snapshot=clone_skill_catalog(snapshot.runtime.skill_catalog_snapshot),
-            templates=list(snapshot.runtime.templates),
             pending_skill_trigger=clone_pending_skill_trigger(snapshot.runtime.pending_skill_trigger),
         ),
     )

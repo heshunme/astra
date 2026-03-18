@@ -55,16 +55,16 @@ These instructions apply to the entire repository tree.
 - Do not reload while a response is streaming.
 - Keep `--base-url`, YAML `base_url`, and `/base-url` behavior aligned.
 - Session history must persist across runtime reloads and session switching.
-- Session snapshot restore must also preserve runtime-only state such as active templates, pending skill trigger, `model`, `base_url`, and `system_prompt`.
+- Session snapshot restore must also preserve runtime-only state such as pending skill trigger, `model`, `base_url`, and `system_prompt`.
 - A new session is materialized/saved only after a normal user prompt, not by slash commands alone.
-- Prompt assembly must match the exact prompt sent to provider: default refs + discovered fragments + session skill catalog + active templates.
+- Prompt assembly must match the exact prompt sent to provider: default refs + discovered fragments + session skill catalog.
 
 ## Skill/Template behavior
 - Discovered skills are inert until explicitly used via `/skill:<name> ...` or armed for next turn with `/skill:<name>`.
 - `/skill:<name>` applies to one turn only; do not introduce permanent skill mode toggles.
 - Skill metadata can be retained in session history, but raw skill files stay on disk and are read on demand via `read` tool.
-- `/template:<name>` activates a discovered prompt fragment for the current process session state.
-- `/skill:<name>` and `/template:<name>` are core extension commands; keep them discoverable in CLI help output even though CLI built-ins are registered separately.
+- `/template:<name> <request>` applies a discovered template to that turn only by rewriting the user message; it must not modify the system prompt or create persistent template state.
+- `/skill:<name>` and `/template:<name> <request>` are core extension commands; keep them discoverable in CLI help output even though CLI built-ins are registered separately.
 - Fail soft on malformed skill YAML or missing files and surface warnings through runtime diagnostics.
 
 ## Implementation rules

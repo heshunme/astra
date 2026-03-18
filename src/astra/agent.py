@@ -317,7 +317,7 @@ class _CoreEngine:
 
 
 class Agent:
-    _EXTENSION_COMMAND_USAGES = ["/skill:<name> [request]", "/template:<name>"]
+    _EXTENSION_COMMAND_USAGES = ["/skill:<name> [request]", "/template:<name> <request>"]
 
     def __init__(
         self,
@@ -406,10 +406,6 @@ class Agent:
         return self.runtime_state.runtime_config
 
     @property
-    def active_templates(self) -> list[str]:
-        return list(self.runtime_state.templates)
-
-    @property
     def pending_skill_name(self) -> str | None:
         trigger = self.runtime_state.pending_skill_trigger
         return trigger.name if trigger is not None else None
@@ -447,7 +443,6 @@ class Agent:
                 cwd=self.runtime_state.cwd,
                 runtime_config=clone_resolved_runtime_config(self.runtime_config),
                 skill_catalog_snapshot=clone_skill_catalog(self.runtime_state.skill_catalog_snapshot),
-                templates=list(self.runtime_state.templates),
                 pending_skill_trigger=(
                     PendingSkillTriggerState(
                         name=self.runtime_state.pending_skill_trigger.name,
@@ -573,7 +568,6 @@ class Agent:
             },
             "templates": {
                 "available": self.runtime.list_template_names(),
-                "active": list(self.active_templates),
             },
             "tool_defaults": {
                 "read_max_lines": self.runtime_config.tools.read_max_lines,
@@ -595,18 +589,13 @@ class Agent:
         if not success:
             return AgentRunResult(assistant_messages=[], tool_results=[], error=effective_text)
 
-        merged_metadata = dict(effective_metadata or {})
-        if metadata:
-            merged_metadata.update(metadata)
-        self.messages.append(
-            Message(
-                role="user",
-                content=effective_text,
-                created_at=utc_now(),
-                metadata=merged_metadata,
-            )
+        return self._submit_user_message(
+            effective_text,
+            metadata=effective_metadata,
+            extra_metadata=metadata,
+            raw_input=raw_input or text,
+            on_event=on_event,
         )
-        return self._engine.run(publish_event=self._publish, on_event=on_event, raw_input=raw_input or text)
 
     def continue_from_context(self, on_event: EventCallback | None = None) -> AgentRunResult:
         if not self.messages:
@@ -641,9 +630,18 @@ class Agent:
         if raw_input.startswith("/template:"):
             name = raw_input[len("/template:") :].strip()
             if not name:
-                return None
-            _success, message = self.activate_template(name)
-            return CoreCommandResult(message=message, persist_state=False)
+                usage = "Usage: /template:<name> <request>"
+                return CoreCommandResult(message=usage, error=usage, persist_state=False)
+            name, _, request_text = name.partition(" ")
+            request_text = request_text.strip()
+            if not name or not request_text:
+                usage = "Usage: /template:<name> <request>"
+                return CoreCommandResult(message=usage, error=usage, persist_state=False)
+            try:
+                result = self.run_template(name, request_text, raw_input, on_event=on_event)
+            except ValueError as exc:
+                return CoreCommandResult(message=str(exc), error=str(exc), persist_state=False)
+            return CoreCommandResult(run_result=result, error=result.error, persist_state=True)
 
         return None
 
@@ -698,14 +696,44 @@ class Agent:
         self.runtime_state.pending_skill_trigger = None
         return self.build_skill_prompt(trigger.name, user_text, trigger.raw_command)
 
-    def activate_template(self, name: str) -> tuple[bool, str]:
-        if not self.runtime.has_template(name):
-            return False, f"Unknown template: {name}"
-        if name not in self.runtime_state.templates:
-            self.runtime_state.templates.append(name)
-            self._refresh_system_prompt()
-            self._publish("state_changed", {"reason": "template", "name": name})
-        return True, f"Activated template: {name}"
+    def run_template(
+        self,
+        name: str,
+        request_text: str,
+        raw_command: str,
+        *,
+        on_event: EventCallback | None = None,
+    ) -> AgentRunResult:
+        success, rewritten, metadata = self.build_template_prompt(name, request_text, raw_command)
+        if not success:
+            raise ValueError(rewritten)
+        return self._submit_user_message(
+            rewritten,
+            metadata=metadata,
+            raw_input=raw_command,
+            on_event=on_event,
+        )
+
+    def build_template_prompt(
+        self,
+        name: str,
+        user_text: str,
+        raw_command: str,
+    ) -> tuple[bool, str, dict[str, object] | None]:
+        key = self.runtime.normalize_prompt_ref(f"template:{name}")
+        fragment = self.runtime.snapshot().prompt_fragments.get(key)
+        if fragment is None:
+            return False, f"Unknown template: {name}", None
+        rewritten = self._rewrite_template_request(name, fragment.text.strip(), user_text)
+        metadata = {
+            "raw_user_input": raw_command,
+            "template_trigger": {
+                "name": name,
+                "source": fragment.source,
+                "key": key,
+            },
+        }
+        return True, rewritten, metadata
 
     def inspect_prompt(self) -> PromptInspection:
         default_inspection = self.runtime.inspect_prompt(self.runtime_config)
@@ -736,26 +764,6 @@ class Agent:
                 )
             )
             seen.add(catalog_key)
-
-        for template_name in self.active_templates:
-            key = self.runtime.normalize_prompt_ref(f"template:{template_name}")
-            if key in seen:
-                continue
-            prompt_fragment = self.runtime.snapshot().prompt_fragments.get(key)
-            if prompt_fragment is None:
-                continue
-            text = prompt_fragment.text.strip()
-            if not text:
-                continue
-            seen.add(key)
-            prompt_parts.append(text)
-            fragments.append(
-                PromptInspectionFragment(
-                    key=key,
-                    source=prompt_fragment.source,
-                    text_length=len(text),
-                )
-            )
 
         return PromptInspection(assembled="\n\n".join(prompt_parts), fragments=fragments)
 
@@ -805,6 +813,28 @@ class Agent:
 
     def _refresh_system_prompt(self) -> None:
         self.current_system_prompt = self.inspect_prompt().assembled
+
+    def _submit_user_message(
+        self,
+        text: str,
+        *,
+        metadata: dict[str, object] | None = None,
+        extra_metadata: dict[str, object] | None = None,
+        raw_input: str,
+        on_event: EventCallback | None = None,
+    ) -> AgentRunResult:
+        merged_metadata = dict(metadata or {})
+        if extra_metadata:
+            merged_metadata.update(extra_metadata)
+        self.messages.append(
+            Message(
+                role="user",
+                content=text,
+                created_at=utc_now(),
+                metadata=merged_metadata,
+            )
+        )
+        return self._engine.run(publish_event=self._publish, on_event=on_event, raw_input=raw_input)
 
     def _build_skill_catalog_text(self) -> str:
         if "read" not in self.tools:
@@ -888,6 +918,20 @@ class Agent:
                 "Read these skill files in order before answering:",
                 files,
                 "This is not a permanent mode switch.",
+                "Original user request:",
+                user_text,
+            ]
+        )
+
+    def _rewrite_template_request(self, name: str, template_text: str, user_text: str) -> str:
+        return "\n".join(
+            [
+                "Please follow the template instructions below for this turn only.",
+                "",
+                f"Template: {name}",
+                "Template instructions:",
+                template_text,
+                "",
                 "Original user request:",
                 user_text,
             ]

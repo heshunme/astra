@@ -95,8 +95,8 @@ CLI 不负责的内容：
 - 处理 runtime reload 的应用逻辑
 - 持有 `AgentRuntimeState`
 - 组装最终 `current_system_prompt`
-- 维护 active templates、pending one-shot skill、skill catalog snapshot
-- 暴露 typed API，例如 `prompt()`、`run_skill()`、`arm_skill()`、`activate_template()`
+- 维护 pending one-shot skill、skill catalog snapshot
+- 暴露 typed API，例如 `prompt()`、`run_skill()`、`arm_skill()`、`run_template()`
 - 暴露 snapshot / restore 能力，供 session 恢复和 `/reload code` 使用
 
 这里的设计重点是把“coding-agent 语义”和“通用执行闭环”分开：
@@ -114,7 +114,7 @@ CLI 不负责的内容：
 - 扫描 prompt 目录，把 `*.md` 注册成 `prompt:<stem>`
 - 扫描 skill 目录，解析 `skill.yaml`，构建 `SkillSpec`
 - 生成 runtime diagnostics，例如加载成功的 prompts/skills 和 warning
-- 根据 `prompts.order` 与 active template refs 组装基础 prompt inspection
+- 根据 `prompts.order` 组装基础 prompt inspection
 
 这个模块不负责：
 
@@ -159,7 +159,7 @@ CLI 不负责的内容：
 ### 3.2 Agent 状态对象
 
 - `AgentConversationState`: 仅保存消息列表
-- `AgentRuntimeState`: 保存 cwd、resolved runtime config、skill catalog snapshot、active templates、pending skill trigger
+- `AgentRuntimeState`: 保存 cwd、resolved runtime config、skill catalog snapshot、pending skill trigger
 - `AgentSnapshot`: conversation + runtime 的完整快照
 
 这说明项目当前采用的是“双状态面”设计：
@@ -183,7 +183,7 @@ CLI 不负责的内容：
 - 兼容和展示友好的顶层字段
 - 用于精确恢复运行态的 `agent_snapshot`
 
-这使得恢复逻辑可以兼容旧格式，又能保住 template、pending skill、base_url 等 runtime-only 状态。
+这使得恢复逻辑可以兼容旧格式，又能保住 pending skill、base_url 等 runtime-only 状态。
 
 ## 4. 配置架构
 
@@ -273,8 +273,7 @@ skill 从以下目录发现：
 
 1. 先按 `runtime_config.prompts.order` 取默认 prompt 片段
 2. 再注入 session 级 skill catalog 文本
-3. 再追加当前会话已激活的 templates
-4. 去重并用空行拼接
+3. 去重并用空行拼接
 
 这里有两个关键点：
 
@@ -284,7 +283,7 @@ skill 从以下目录发现：
 因此最终 provider prompt 依赖两类信息：
 
 - runtime 配置与磁盘发现结果
-- session 运行态，比如 active templates 与当前 skill catalog snapshot
+- session 运行态，比如当前 skill catalog snapshot
 
 ### 6.1 为什么 skill catalog 要注入 system prompt
 
@@ -405,18 +404,18 @@ CLI 自己注册并处理的命令包括：
 CLI 当前暴露两个核心扩展命令：
 
 - `/skill:<name> [request]`
-- `/template:<name>`
+- `/template:<name> <request>`
 
 其中：
 
 - `/skill:<name> <request>` 会立即改写成本轮用户请求并执行
 - `/skill:<name>` 会武装下一条普通输入，只生效一次
-- `/template:<name>` 会激活模板到当前 session runtime state，不直接发请求
+- `/template:<name> <request>` 会立即改写成本轮用户请求并执行，template 正文插入该条 user message 头部
 
 但这部分现在分成两层：
 
 - CLI 负责解析命令文本
-- `Agent` 负责真正的 typed 行为方法，例如 `run_skill()`、`arm_skill()`、`activate_template()`
+- `Agent` 负责真正的 typed 行为方法，例如 `run_skill()`、`arm_skill()`、`run_template()`
 
 这样 `Agent` 可以被非 CLI 入口复用，而不用依赖 slash command 字符串协议。
 
@@ -438,7 +437,6 @@ CLI 启动时会先创建一个 `Session` 对象，但默认 `materialized=False
 当前 session 持久化不是只存消息，还会存 `agent_snapshot`。原因是单靠消息历史无法恢复这些 runtime-only 状态：
 
 - 当前生效的 `base_url`
-- 当前 active templates
 - pending one-shot skill
 - 会话中的 skill catalog snapshot
 - 工具默认值、prompt order、capability paths 等 resolved runtime 信息

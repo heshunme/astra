@@ -113,7 +113,6 @@ def agent_snapshot_to_dict(snapshot: AgentSnapshot) -> dict:
                 }
                 for entry in snapshot.runtime.skill_catalog_snapshot
             ],
-            "templates": list(snapshot.runtime.templates),
             "pending_skill_trigger": (
                 {
                     "name": snapshot.runtime.pending_skill_trigger.name,
@@ -151,7 +150,6 @@ def agent_snapshot_from_dict(data: dict, fallback_runtime_config: ResolvedRuntim
             cwd=snapshot_cwd,
             runtime_config=runtime_config,
             skill_catalog_snapshot=skill_catalog,
-            templates=list(runtime_raw.get("templates", [])),
             pending_skill_trigger=pending_skill,
         ),
     )
@@ -249,7 +247,6 @@ def session_to_agent_snapshot(session: Session, fallback_runtime_config: Resolve
             cwd=session.cwd,
             runtime_config=runtime_config,
             skill_catalog_snapshot=clone_skill_catalog(session.skill_catalog_snapshot),
-            templates=[],
             pending_skill_trigger=None,
         ),
     )

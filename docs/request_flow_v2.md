@@ -37,8 +37,8 @@ sequenceDiagram
             A->>A: 改写为本轮 user message
         else /skill:<name>
             A->>A: 武装下一条普通输入
-        else /template:<name>
-            A->>A: 激活 template
+        else /template:<name> <request>
+            A->>A: 改写为本轮 user message
         end
     else 普通用户请求
         CLI->>A: prompt(text)
@@ -115,7 +115,7 @@ sequenceDiagram
 每次读入一行后分流顺序：
 
 1. 先尝试命令注册表（`/help`、`/reload`、`/model`、`/runtime`、`/sessions` 等）。
-2. 若未命中，再尝试扩展命令（`/skill:<name>`、`/template:<name>`）。
+2. 若未命中，再尝试扩展命令（`/skill:<name>`、`/template:<name> <request>`）。
 3. 都未命中时，作为普通用户请求走 `run_user_prompt()`。
 
 ### 一次性模式
@@ -162,8 +162,7 @@ sequenceDiagram
 
 1. 先按 `prompts.order` 取默认片段（来自 runtime）。
 2. 注入 session skill catalog 文本（仅目录与使用说明；不含 skill 正文，且要求 `read` 工具可用）。
-3. 追加当前会话激活模板（`/template:<name>`）。
-4. 去重并用空行拼接，结果写到 `current_system_prompt`。
+3. 去重并用空行拼接，结果写到 `current_system_prompt`。
 
 `/runtime prompt` 与 `/runtime json prompt` 使用同一路径，不会与实际 provider prompt 分叉。
 
@@ -183,12 +182,12 @@ sequenceDiagram
 - 下一条 `agent.prompt()` 消费后自动清除 pending 状态。
 - 不会切换为永久 skill 模式。
 
-### `/template:<name>`
+### `/template:<name> <request>`
 
-激活 template（本质是 `prompt:<name>` 片段）到当前会话运行态：
+立即改写为普通用户请求并发起本轮调用：
 
-- 影响后续 system prompt 组装。
-- 不自动发起模型请求。
+- 改写文本会把 template 正文插入该条 user message 的头部。
+- 在用户消息 metadata 中记录原始命令与 template 触发信息。
 
 约束：
 
@@ -206,7 +205,7 @@ sequenceDiagram
 - 消息历史（含 tool calls/results）
 - `model/system_prompt/cwd`
 - skill catalog snapshot
-- agent snapshot（含模板、pending skill、runtime config 等）
+- agent snapshot（含 pending skill、runtime config 等）
 
 ## 9. `/reload` 与 `/reload code`
 

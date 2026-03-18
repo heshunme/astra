@@ -145,7 +145,7 @@ def print_reload_summary(agent: Agent, message: str, warnings: list[str] | None 
     print(f"skills.available={', '.join(summary['skills']['available']) or '(none)'}")
     print(f"skills.history_only={', '.join(summary['skills']['history_only']) or '(none)'}")
     print(f"skills.pending={summary['skills']['pending'] or '(none)'}")
-    print(f"templates.active={', '.join(summary['templates']['active']) or '(none)'}")
+    print(f"templates.available={', '.join(summary['templates']['available']) or '(none)'}")
     print(f"prompts.loaded={len(summary['prompts']['loaded'])}")
     print(f"skills.loaded={len(summary['skills']['loaded'])}")
     print(f"read.max_lines={summary['tool_defaults']['read_max_lines']}")
@@ -183,15 +183,13 @@ def print_skills_list(agent: Agent) -> None:
 
 def print_templates_list(agent: Agent) -> None:
     templates = agent.runtime.list_template_names()
-    active_templates = set(agent.active_templates)
     print("Templates")
     if not templates:
         print("No templates available.")
         return
 
     for name in templates:
-        suffix = " (active)" if name in active_templates else ""
-        print(f"- {name}{suffix}")
+        print(f"- {name}")
 
 
 def print_runtime_config_summary(agent: Agent) -> None:
@@ -263,7 +261,6 @@ def print_runtime_summary(agent: Agent, show_warnings_only: bool = False) -> Non
     print(f"skills.history_only={', '.join(skill_summary['history_only']) or '(none)'}")
     print(f"skills.pending={skill_summary['pending'] or '(none)'}")
     print(f"templates.available={', '.join(template_summary['available']) or '(none)'}")
-    print(f"templates.active={', '.join(template_summary['active']) or '(none)'}")
     print(f"prompts.loaded={', '.join(prompt_summary['loaded']) or '(none)'}")
     print(f"skills.loaded={', '.join(skill_summary['loaded']) or '(none)'}")
     print(f"warnings.count={len(warnings)}")
@@ -344,12 +341,21 @@ def handle_extension_command(agent: Agent, line: str, run_streaming: Callable[[C
         return True, False
 
     if line.startswith("/template:"):
-        name = line[len("/template:") :].strip()
-        if not name:
-            return False, False
-        _success, message = agent.activate_template(name)
-        print(message)
-        return True, False
+        remainder = line[len("/template:") :].strip()
+        name, _, request_text = remainder.partition(" ")
+        request_text = request_text.strip()
+        if not name or not request_text:
+            print("Usage: /template:<name> <request>")
+            return True, False
+        try:
+            result = run_streaming(lambda: agent.run_template(name, request_text, line))
+        except ValueError as exc:
+            print(str(exc))
+            return True, False
+        print()
+        if result.error:
+            print(result.error, file=sys.stderr)
+        return True, True
 
     result = run_streaming(lambda: agent.try_handle_extension_command(line))
     if result is None:
