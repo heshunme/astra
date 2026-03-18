@@ -34,38 +34,29 @@ flowchart TD
 
 ## 1. 总览
 
-当前项目是一个分层明确的命令行 coding agent，整体可以分成 4 层：
+当前项目的主视图建议收敛为 3 层：
 
-1. CLI 编排层
+1. CLI 层
 - 入口是 `src/astra/cli.py`
-- 负责参数解析、环境与 YAML 配置加载、会话存储、终端输出、内建 slash 命令注册与扩展命令解析
-- 不负责具体的 agent 推理循环，也不直接实现 skill/template 业务语义
+- 负责参数解析、环境与 YAML 配置加载、会话存储编排、终端输出、内建 slash 命令注册，以及交互模式下的扩展命令分流
 
-2. Coding-Agent Service 层
+2. Coding-Agent 层
 - 入口是 `src/astra/agent.py`
 - 对外仍导出为 `Agent`
-- 负责 runtime 应用、system prompt 组装、skill/template 语义、runtime inspection、session 级临时状态
-- 通过组合内部 core engine 和 `CapabilityRuntime` 工作
+- 负责 runtime 应用、system prompt 组装、skill/template 语义、runtime inspection、session 级临时状态等产品层策略
 
-3. Core Engine + Capability Runtime 层
-- `src/astra/agent.py` 内部 `_CoreEngine`
-  - 负责对话消息、provider/tool 闭环、事件流、abort、snapshot/restore 基础能力
-- 入口是 `src/astra/runtime/runtime.py`
-- 负责把“可重载配置”解析成可执行快照：工具注册结果、prompt 片段、skill 元数据、diagnostics
-- 提供 prompt/template/skill 的发现与索引能力，但不持有会话消息
-
-4. 基础设施适配层
-- `src/astra/provider.py`: OpenAI-compatible SSE provider
-- `src/astra/tools.py`: workspace-scoped 工具实现
-- `src/astra/session.py`: session JSON 持久化与 snapshot 序列化
-- `src/astra/config.py`: 配置模型、默认值、merge 与校验
-- `src/astra/models.py`: 核心 dataclass 数据模型
+3. Core 层
+- 包含 `src/astra/agent.py` 内部 `_CoreEngine` 与 `src/astra/runtime/runtime.py`
+- `_CoreEngine` 负责对话消息、provider/tool 闭环、事件流、abort、snapshot/restore 等核心 agent loop 能力
+- `CapabilityRuntime` 负责最小运行底座：把可重载配置解析成可执行快照，并提供工具、prompt、skill 的基础索引能力
 
 可以把它理解为：
 
-`CLI -> Agent(coding-agent service) -> _CoreEngine / CapabilityRuntime / Provider / Tools / SessionStore`
+`CLI -> Agent(coding-agent service) -> Core(_CoreEngine + CapabilityRuntime)`
 
-其中 CLI 负责“把协议和进程拼起来”，`Agent` 负责“把 coding-agent 语义组装起来”，`_CoreEngine` 负责“把一轮对话跑完”，Capability Runtime 负责“告诉 Agent 当前有哪些能力可用”。
+其中 CLI 负责“把协议和进程拼起来”，`Agent` 负责“把 coding-agent 语义组装起来”，Core 负责“把一轮对话跑完，并提供让 loop 运转所需的最基础底座能力”。
+
+在这套三层主视图之下，`provider.py`、`tools.py`、`session.py`、`config.py`、`models.py` 仍然是关键支撑模块，但不再单独提升为主分层。
 
 ## 2. 模块边界
 
@@ -86,7 +77,7 @@ CLI 不负责的内容：
 
 - 不直接组装 provider messages
 - 不直接跑 tool loop
-- 不直接实现 skill/template 的领域语义；只负责把 `/skill:<name>`、`/template:<name>` 解析成对 `Agent` typed API 的调用
+- 不直接组装 skill/template 的改写文本；主要通过 typed API 驱动 `Agent`，虽然 `Agent` 仍保留了一层兼容性的扩展命令字符串解析入口
 
 ### 2.2 Agent: coding-agent 服务层
 
@@ -98,6 +89,7 @@ CLI 不负责的内容：
 - 维护 pending one-shot skill、skill catalog snapshot
 - 暴露 typed API，例如 `prompt()`、`run_skill()`、`arm_skill()`、`run_template()`
 - 暴露 snapshot / restore 能力，供 session 恢复和 `/reload code` 使用
+- 承担产品层策略，而不是最底层 provider/tool loop 细节
 
 这里的设计重点是把“coding-agent 语义”和“通用执行闭环”分开：
 
@@ -105,9 +97,14 @@ CLI 不负责的内容：
 - 通用执行闭环在 `_CoreEngine`
 - 可重建能力快照在 `CapabilityRuntime.snapshot()`
 
-### 2.3 Capability Runtime: 可重载能力索引
+### 2.3 Core: 核心 loop 与最小运行底座
 
-`src/astra/runtime/runtime.py` 负责：
+Core 由两部分组成：
+
+- `src/astra/agent.py` 内部 `_CoreEngine`
+- `src/astra/runtime/runtime.py`
+
+其中 `CapabilityRuntime` 负责：
 
 - 注册内建工具并按配置筛选启用工具
 - 注册内置 prompt 片段和配置 prompt 片段
@@ -116,16 +113,17 @@ CLI 不负责的内容：
 - 生成 runtime diagnostics，例如加载成功的 prompts/skills 和 warning
 - 根据 `prompts.order` 组装基础 prompt inspection
 
-这个模块不负责：
+而 Core 的边界是：
 
 - session 持久化
 - 消息历史
-- provider 调用
+- CLI slash command 协议
+- 产品层的 skill/template 触发语义
 - 直接执行 skill 文件内容
 
-它更像一个“能力目录服务”。
+也就是说，Core 只负责核心 agent loop 及其最基础的基建，不承载更高层的交互协议和产品策略。
 
-### 2.4 Provider / Tools / SessionStore: 三个独立适配器
+### 2.4 支撑模块：Provider / Tools / SessionStore / Config / Models
 
 `provider.py`:
 - 提供 OpenAI-compatible `POST /chat/completions` SSE 流式调用
@@ -143,6 +141,12 @@ CLI 不负责的内容：
 - 既保存消息，也保存 `agent_snapshot`
 - 支持 `create/load/save/list/fork`
 - 负责 `Session <-> AgentSnapshot <-> dict` 的序列化转换
+
+`config.py`:
+- 定义配置模型、默认值、merge 与校验逻辑
+
+`models.py`:
+- 定义消息、事件、session、snapshot 等核心 dataclass
 
 ## 3. 核心数据结构
 
@@ -323,13 +327,13 @@ skill 从以下目录发现：
 在交互模式下，每行输入按下面顺序处理：
 
 1. 先试 CLI built-in 命令注册表
-2. 再由 CLI 解析 `/skill:` 和 `/template:`，并转成对 `Agent` typed API 的调用
+2. 再优先由 CLI 解析 `/skill:` 和 `/template:`，并转成对 `Agent` typed API 的调用
 3. 最后才当作普通用户 prompt
 
-这是一个很明确的责任分离：
+这是当前主路径上的责任分离：
 
 - CLI 管自己的 slash commands
-- `Agent` 管 skill/template 语义，但不再直接承担命令字符串协议解析
+- `Agent` 管 skill/template 语义，并且仍保留 `try_handle_extension_command()` 作为兼容性的命令字符串解析入口
 
 ### 7.3 普通请求主循环
 
@@ -411,11 +415,12 @@ CLI 当前暴露两个核心扩展命令：
 - `/skill:<name> <request>` 会立即改写成本轮用户请求并执行
 - `/skill:<name>` 会武装下一条普通输入，只生效一次
 - `/template:<name> <request>` 会立即改写成本轮用户请求并执行，template 正文插入该条 user message 头部
+- 当前 template 名称实际来自 runtime 中已加载的 `prompt:<stem>` 片段
 
 但这部分现在分成两层：
 
-- CLI 负责解析命令文本
-- `Agent` 负责真正的 typed 行为方法，例如 `run_skill()`、`arm_skill()`、`run_template()`
+- CLI 是交互模式下的首选解析入口
+- `Agent` 负责真正的 typed 行为方法，例如 `run_skill()`、`arm_skill()`、`run_template()`，并保留兼容性的字符串解析入口
 
 这样 `Agent` 可以被非 CLI 入口复用，而不用依赖 slash command 字符串协议。
 
@@ -428,7 +433,7 @@ CLI 启动时会先创建一个 `Session` 对象，但默认 `materialized=False
 - 进程内有当前 session 状态
 - 但磁盘上不一定已经有 session JSON
 
-只有发生正常用户请求，或者会触发真实请求的扩展命令时，CLI 才会调用 `persist_agent_state(create_if_needed=True)`，把 session 真正写到磁盘。
+只有发生正常用户请求，或者会触发真实请求的扩展命令时，CLI 才会在请求完成后调用 `persist_agent_state(create_if_needed=True)`，把 session 真正写到磁盘。
 
 这意味着 slash 命令本身不会凭空制造一个空会话文件。
 
@@ -440,6 +445,7 @@ CLI 启动时会先创建一个 `Session` 对象，但默认 `materialized=False
 - pending one-shot skill
 - 会话中的 skill catalog snapshot
 - 工具默认值、prompt order、capability paths 等 resolved runtime 信息
+- 当前生效的 `model` 与 `system_prompt`
 
 因此恢复 session 时，CLI 会：
 
