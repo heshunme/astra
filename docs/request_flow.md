@@ -13,7 +13,7 @@
    - `system_prompt = CLI > YAML > ""`  
 5. 检查 `OPENAI_API_KEY`，缺失即退出。  
 6. 初始化 `CapabilityRuntime`、`Agent`、`SessionStore`。  
-7. 如果使用 `--session`（且未 `--new-session`），先加载旧会话，再用会话里的 `model/system_prompt/cwd` 覆盖当前 agent 配置。  
+7. 如果使用 `--session`（且未 `--new-session`），先加载旧会话，再用会话快照里的 `model/base_url/system_prompt/cwd` 恢复当前 agent 配置。  
 8. 启动时执行一次 `agent.reload_runtime(...)`，构建工具与 prompt 快照。
 
 ## 2. Runtime reload 产物
@@ -45,17 +45,17 @@ REPL 模式每次读入一行后：
 1. 若以 `/` 开头且命中命令注册表，走命令处理，不进入模型请求。  
 2. 否则作为普通请求进入 `run_user_prompt()`，再调用 `agent.prompt(...)`。  
 
-一次性调用模式（命令行直接传 `prompt`）会直接 `agent.prompt(...)`。
+一次性调用模式（命令行直接传 `prompt`）会走 `run_user_prompt()`，再调用 `agent.prompt(...)`。
 
 ## 4. 普通请求主链路
 
-`Agent.prompt(text)` 执行顺序：
+`run_user_prompt(text)` 与 `Agent.prompt(text)` 的分工如下：
 
-1. materialize 会话（从“未落地会话”变为可保存会话）。  
-2. 若是首条普通消息且会话无名，用该消息设默认会话名。  
-3. 把用户消息追加到 `session.messages`（可带 metadata）。  
-4. 先保存会话到 `~/.astra-python/sessions/<id>.json`。  
-5. 进入 `_run()` 开始 provider 循环。
+1. CLI 的 `run_user_prompt(text)` 先为未命名的新会话设置默认名称。  
+2. `Agent.prompt(text)` 先消费 pending one-shot skill（如果有），并完成输入改写。  
+3. `Agent.prompt(text)` 通过 `_submit_user_message(...)` 追加一条 user message（可带 metadata）。  
+4. `Agent.prompt(text)` 调用 `_run()` 进入 provider 循环。  
+5. provider 循环结束后，CLI 再调用 `persist_agent_state(create_if_needed=True)` 把 session 写到 `~/.astra-python/sessions/<id>.json`。
 
 ## 5. `_run()` 中的 provider + tools 循环
 
@@ -98,15 +98,15 @@ REPL 模式每次读入一行后：
 
 1. `/skill:<name> <request>`：立即改写成普通用户文本后发起本轮请求。  
 2. `/skill:<name>`：仅“武装”下一条普通输入，消费一次后清除。  
-3. `/template:<name> <request>`：立即改写成普通用户文本后发起本轮请求，template 正文插入到该条 user message 头部。  
+3. `/template:<name> <request>`：立即改写成普通用户文本后发起本轮请求，template 正文插入到该条 user message 头部。template 名称来自当前 runtime 已加载的 `prompt:<stem>` 片段。  
 4. skill 触发依赖 `read` 工具；若 `read` 被禁用，则 `/skill:` 返回错误提示。
 
 ## 9. 会话持久化关键点
 
-1. 普通用户消息在调用 provider 之前就先落盘。  
+1. 普通用户消息会先进入 agent 内存状态并发起 provider 请求；当前 CLI 在请求结束后统一落盘。  
 2. `/help`、`/runtime`、`/tools` 等 slash 命令本身不会自动创建新会话文件。  
 3. `reload/switch/resume/fork/rename/save` 都围绕同一套 session JSON 存储。  
-4. session 除消息外还保存 `model/system_prompt/cwd` 与 skill catalog 快照。  
+4. session 除消息外还保存 `agent_snapshot`；其中包含 `model/base_url/system_prompt/cwd`、skill catalog 快照、pending skill，以及完整的 resolved runtime 信息。  
 
 ## 10. 运行时限制
 
