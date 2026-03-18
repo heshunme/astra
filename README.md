@@ -297,6 +297,14 @@ This prepares a temporary workspace with:
 
 It then launches `python -m astra --cwd <temp-workspace>` so you can manually test the CLI against a disposable project. Use `--no-launch` to only prepare the workspace, or `--cleanup` to remove it after the session exits successfully.
 
+Manual real-provider evolution pass:
+
+```bash
+.venv/bin/python scripts/manual_evolution.py --keep-temp
+```
+
+This prepares a disposable workspace, runs one real `Agent.prompt(...)` call against the configured provider, evolves a project skill from the resulting snapshot, reloads the runtime, and prints the generated skill directory plus checklist preview. If the current shell does not already export a real `OPENAI_API_KEY`, the script falls back to the repository `.env` or `--env-file`.
+
 Extended validation (recommended for nightly runs):
 
 ```powershell

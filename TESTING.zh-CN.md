@@ -167,6 +167,24 @@ python -m astra --cwd <temp-workspace>
 - `.astra/skills/*`
 - 适合 `read`、`edit`、`find`、`grep`、`ls`、`bash` 的示例文件
 
+### 手工真实 provider 自进化链路
+
+如果这次要手工验证真实模型 + snapshot -> evolution -> skill reload 这条链路，用：
+
+```bash
+.venv/bin/python scripts/manual_evolution.py --keep-temp
+```
+
+这个脚本会：
+
+- 准备一个临时工作区和独立 `HOME`
+- 用真实 provider 跑一轮 `Agent.prompt(...)`
+- 基于 `agent.snapshot()` 调用 `SkillEvolutionService`
+- 把生成的 skill 写到 `.astra/skills/<slug>/`
+- 重新 `reload` runtime 并确认 skill 被重新发现
+
+如果当前 shell 没有真实 `OPENAI_API_KEY`，脚本会回退到仓库 `.env`，也可以手动指定 `--env-file /path/to/.env`。
+
 ### 手工命令清单
 
 进入 CLI 后，至少建议走一遍：
