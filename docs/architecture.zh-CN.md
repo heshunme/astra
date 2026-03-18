@@ -1,6 +1,6 @@
 # 当前项目架构说明
 
-本文基于 2026-03-15 仓库当前实现编写，描述 `astra` Python replica 的实际架构，而不是目标蓝图。内容重点覆盖模块边界、核心状态、主调用链、持久化与扩展点。
+本文基于 2026-03-18 仓库当前实现编写，描述 `astra` Python replica 的实际架构，而不是目标蓝图。内容重点覆盖模块边界、核心状态、主调用链、持久化与扩展点。
 
 ```mermaid
 flowchart TD
@@ -38,15 +38,18 @@ flowchart TD
 
 1. CLI 编排层
 - 入口是 `src/astra/cli.py`
-- 负责参数解析、环境与 YAML 配置加载、会话存储、终端输出、内建 slash 命令注册
-- 不负责具体的 agent 推理循环，也不直接实现 skill/template 语义
+- 负责参数解析、环境与 YAML 配置加载、会话存储、终端输出、内建 slash 命令注册与扩展命令解析
+- 不负责具体的 agent 推理循环，也不直接实现 skill/template 业务语义
 
-2. Agent Core 层
+2. Coding-Agent Service 层
 - 入口是 `src/astra/agent.py`
-- 负责消息状态机、system prompt 组装、provider/tool 闭环、runtime 应用、skill/template 扩展命令语义
-- 这是项目真正的“执行内核”
+- 对外仍导出为 `Agent`
+- 负责 runtime 应用、system prompt 组装、skill/template 语义、runtime inspection、session 级临时状态
+- 通过组合内部 core engine 和 `CapabilityRuntime` 工作
 
-3. Capability Runtime 层
+3. Core Engine + Capability Runtime 层
+- `src/astra/agent.py` 内部 `_CoreEngine`
+  - 负责对话消息、provider/tool 闭环、事件流、abort、snapshot/restore 基础能力
 - 入口是 `src/astra/runtime/runtime.py`
 - 负责把“可重载配置”解析成可执行快照：工具注册结果、prompt 片段、skill 元数据、diagnostics
 - 提供 prompt/template/skill 的发现与索引能力，但不持有会话消息
@@ -60,9 +63,9 @@ flowchart TD
 
 可以把它理解为：
 
-`CLI -> Agent -> CapabilityRuntime / Provider / Tools / SessionStore`
+`CLI -> Agent(coding-agent service) -> _CoreEngine / CapabilityRuntime / Provider / Tools / SessionStore`
 
-其中 CLI 负责“把系统拼起来”，Agent 负责“把一轮对话跑完”，Capability Runtime 负责“告诉 Agent 当前有哪些能力可用”。
+其中 CLI 负责“把协议和进程拼起来”，`Agent` 负责“把 coding-agent 语义组装起来”，`_CoreEngine` 负责“把一轮对话跑完”，Capability Runtime 负责“告诉 Agent 当前有哪些能力可用”。
 
 ## 2. 模块边界
 
@@ -83,26 +86,24 @@ CLI 不负责的内容：
 
 - 不直接组装 provider messages
 - 不直接跑 tool loop
-- 不直接决定 `/skill:<name>` 和 `/template:<name>` 的业务语义
+- 不直接实现 skill/template 的领域语义；只负责把 `/skill:<name>`、`/template:<name>` 解析成对 `Agent` typed API 的调用
 
-### 2.2 Agent Core: 对话状态机与执行闭环
+### 2.2 Agent: coding-agent 服务层
 
-`src/astra/agent.py` 是核心中的核心，负责：
+`src/astra/agent.py` 当前同时包含一个对外服务对象 `Agent` 和一个内部 `_CoreEngine`。其中 `Agent` 负责：
 
-- 持有 conversation state 与 runtime state
-- 保存 `current_system_prompt`
 - 处理 runtime reload 的应用逻辑
-- 生成 provider 请求消息与 tool schema
-- 消费 provider stream 事件
-- 执行工具调用并把结果写回消息历史
+- 持有 `AgentRuntimeState`
+- 组装最终 `current_system_prompt`
 - 维护 active templates、pending one-shot skill、skill catalog snapshot
-- 提供 `/skill:<name>` 与 `/template:<name>` 扩展命令
+- 暴露 typed API，例如 `prompt()`、`run_skill()`、`arm_skill()`、`activate_template()`
 - 暴露 snapshot / restore 能力，供 session 恢复和 `/reload code` 使用
 
-这里的设计重点是把“长期状态”和“可重建能力快照”分开：
+这里的设计重点是把“coding-agent 语义”和“通用执行闭环”分开：
 
-- 长期状态在 `AgentRuntimeState` / `AgentConversationState`
-- 可重建快照在 `CapabilityRuntime.snapshot()`
+- session/runtime 语义在 `Agent`
+- 通用执行闭环在 `_CoreEngine`
+- 可重建能力快照在 `CapabilityRuntime.snapshot()`
 
 ### 2.3 Capability Runtime: 可重载能力索引
 
@@ -323,13 +324,13 @@ skill 从以下目录发现：
 在交互模式下，每行输入按下面顺序处理：
 
 1. 先试 CLI built-in 命令注册表
-2. 再试 Agent 扩展命令 `/skill:` 和 `/template:`
+2. 再由 CLI 解析 `/skill:` 和 `/template:`，并转成对 `Agent` typed API 的调用
 3. 最后才当作普通用户 prompt
 
 这是一个很明确的责任分离：
 
 - CLI 管自己的 slash commands
-- Agent 管自己的 extension commands
+- `Agent` 管 skill/template 语义，但不再直接承担命令字符串协议解析
 
 ### 7.3 普通请求主循环
 
@@ -399,9 +400,9 @@ CLI 自己注册并处理的命令包括：
 - 会话存储与切换
 - 终端展示
 
-### 8.2 Agent extension commands
+### 8.2 Extension 命令与 typed API
 
-Agent 当前内置两个扩展命令前缀：
+CLI 当前暴露两个核心扩展命令：
 
 - `/skill:<name> [request]`
 - `/template:<name>`
@@ -412,7 +413,12 @@ Agent 当前内置两个扩展命令前缀：
 - `/skill:<name>` 会武装下一条普通输入，只生效一次
 - `/template:<name>` 会激活模板到当前 session runtime state，不直接发请求
 
-这部分语义在 agent-core，而不是 CLI。说明项目刻意把“扩展能力”放在内核，而不是纯终端层。
+但这部分现在分成两层：
+
+- CLI 负责解析命令文本
+- `Agent` 负责真正的 typed 行为方法，例如 `run_skill()`、`arm_skill()`、`activate_template()`
+
+这样 `Agent` 可以被非 CLI 入口复用，而不用依赖 slash command 字符串协议。
 
 ## 9. Session 与持久化架构
 

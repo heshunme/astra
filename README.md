@@ -30,19 +30,18 @@ astra --model gpt-4o-mini --base-url http://your-gateway/v1
 ```
 
 ## Architecture
-The project is in a transition state. The current implementation is still closer to two layers:
+The project is in a transition state, but the code now follows a three-layer shape:
 
-- `agent-core`
-  - Currently owns conversation state, runtime state, prompt assembly, tool orchestration, event emission, and some product semantics such as skill/template handling
+- `core engine`
+  - Owns conversation state, provider/tool orchestration, event emission, abort, and generic snapshot/restore mechanics
+- `coding-agent`
+  - Owns runtime reload application, prompt assembly, skill/template behavior, runtime inspection, and other coding-agent-specific policy
 - CLI
-  - Owns config loading, session persistence, terminal I/O, and built-in interactive commands such as `/model`, `/base-url`, `/skills`, `/templates`, `/reload`, `/sessions`, and `/exit`
+  - Owns config loading, session persistence, terminal I/O, and slash-command parsing for interactive commands such as `/model`, `/base-url`, `/skills`, `/templates`, `/reload`, `/sessions`, `/skill:<name>`, and `/template:<name>`
 
 Longer-term architecture direction, including core-engine goals and self-evolution layering, is documented in `docs/evolution_strategy.md`.
 
-The current extension commands are still handled by the core:
-
-- `/skill:<name> [request]`
-- `/template:<name>`
+The current non-CLI reusable entrypoint is still the exported `Agent` type, which now acts as the coding-agent service facade over the internal core engine.
 
 For a current architecture survey in Chinese, see `docs/architecture.zh-CN.md`.
 
@@ -160,7 +159,7 @@ Runtime prompt
 fragments=3
 char_length=240
 fragment[1]=builtin:base source=builtin chars=86
-fragment[2]=session:skills-catalog source=agent-core chars=117
+fragment[2]=session:skills-catalog source=coding-agent chars=117
 fragment[3]=prompt:repo-rules source=E:\repo\.astra\prompts\repo-rules.md chars=37
 assembled_with_boundaries:
 ...

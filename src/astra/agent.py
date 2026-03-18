@@ -48,14 +48,277 @@ class AgentConfig:
     system_prompt: str
 
 
-@dataclass(slots=True)
-class ExtensionCommandSpec:
-    prefix: str
-    usage: str
-    handler: Callable[[str, str, EventCallback | None], CoreCommandResult | None]
+class _CoreEngine:
+    def __init__(
+        self,
+        config: AgentConfig,
+        *,
+        provider: object | None = None,
+        provider_factory: ProviderFactory | None = None,
+        tool_executor: ToolExecutor | None = None,
+    ):
+        self.config = config
+        self._provider_factory = provider_factory or (lambda base_url: OpenAICompatibleProvider(base_url))
+        self.provider = provider or self._provider_factory(config.base_url)
+        self._tool_executor = tool_executor or execute_tool
+        self.conversation_state = AgentConversationState()
+        self.tools: dict[str, object] = {}
+        self.current_system_prompt = ""
+        self.is_streaming = False
+        self.pending_tool_calls: set[str] = set()
+        self.error: str | None = None
+        self._read_max_lines = 400
+        self._bash_timeout_seconds = 60
+        self._bash_max_output_bytes = 32 * 1024
+
+    @property
+    def messages(self) -> list[Message]:
+        return self.conversation_state.messages
+
+    def snapshot_conversation(self) -> AgentConversationState:
+        return AgentConversationState(messages=clone_messages(self.messages))
+
+    def restore_conversation(self, conversation: AgentConversationState) -> None:
+        self.conversation_state = AgentConversationState(messages=clone_messages(conversation.messages))
+
+    def replace_messages(self, messages: list[Message]) -> None:
+        self.conversation_state.messages = clone_messages(messages)
+
+    def sync_execution_state(
+        self,
+        runtime_config: ResolvedRuntimeConfig,
+        cwd: Path,
+        *,
+        tools: dict[str, object] | None = None,
+        current_system_prompt: str | None = None,
+        rebuild_provider: bool,
+    ) -> None:
+        prior_base_url = self.config.base_url
+        self.config.model = runtime_config.model
+        self.config.base_url = runtime_config.base_url
+        self.config.system_prompt = runtime_config.system_prompt
+        self.config.cwd = cwd
+        self._read_max_lines = runtime_config.tools.read_max_lines
+        self._bash_timeout_seconds = runtime_config.tools.bash_timeout_seconds
+        self._bash_max_output_bytes = runtime_config.tools.bash_max_output_bytes
+        if tools is not None:
+            self.tools = dict(tools)
+        if current_system_prompt is not None:
+            self.current_system_prompt = current_system_prompt
+        if rebuild_provider or prior_base_url != runtime_config.base_url:
+            self.provider = self._provider_factory(runtime_config.base_url)
+
+    def set_model(self, model: str) -> None:
+        self.config.model = model
+
+    def set_base_url(self, base_url: str) -> None:
+        self.config.base_url = base_url
+        self.provider = self._provider_factory(base_url)
+
+    def abort(self) -> None:
+        close_active_stream = getattr(self.provider, "close_active_stream", None)
+        if callable(close_active_stream):
+            close_active_stream()
+
+    def wait_for_idle(self, timeout: float | None = None) -> bool:
+        deadline = None if timeout is None else monotonic() + timeout
+        while self.is_streaming:
+            if deadline is not None and monotonic() >= deadline:
+                return False
+            sleep(0.01)
+        return True
+
+    def _build_provider_messages(self) -> list[dict[str, object]]:
+        messages: list[dict[str, object]] = []
+        if self.current_system_prompt:
+            messages.append({"role": "system", "content": self.current_system_prompt})
+        for message in self.messages:
+            if message.role == "user":
+                messages.append({"role": "user", "content": message.content})
+            elif message.role == "assistant":
+                payload: dict[str, object] = {"role": "assistant", "content": message.content or None}
+                if message.tool_calls:
+                    payload["tool_calls"] = [
+                        {
+                            "id": tool_call.id,
+                            "type": "function",
+                            "function": {"name": tool_call.name, "arguments": tool_call.arguments},
+                        }
+                        for tool_call in message.tool_calls
+                    ]
+                messages.append(payload)
+            elif message.role == "tool_result":
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": message.tool_call_id,
+                        "content": message.content,
+                    }
+                )
+        return messages
+
+    def _build_provider_tools(self) -> list[dict[str, object]]:
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.schema,
+                },
+            }
+            for tool in self.tools.values()
+        ]
+
+    def _tool_context(self) -> ToolContext:
+        cwd = self.config.cwd
+        return ToolContext(
+            cwd=cwd,
+            workspace_root=cwd,
+            timeout_seconds=self._bash_timeout_seconds,
+            max_output_bytes=self._bash_max_output_bytes,
+            read_max_lines=self._read_max_lines,
+        )
+
+    def run(
+        self,
+        *,
+        publish_event: Callable[[str, dict[str, object] | None, EventCallback | None], None],
+        on_event: EventCallback | None = None,
+        raw_input: str | None = None,
+    ) -> AgentRunResult:
+        assistant_messages: list[Message] = []
+        tool_results: list[Message] = []
+        usage: dict[str, object] | None = None
+        self.error = None
+        publish_event("agent_start", {"raw_input": raw_input}, on_event)
+        publish_event("turn_start", {"message_count": len(self.messages)}, on_event)
+        try:
+            while True:
+                request = ProviderRequest(
+                    model=self.config.model,
+                    messages=self._build_provider_messages(),
+                    tools=self._build_provider_tools(),
+                    api_key=self.config.api_key,
+                    base_url=self.config.base_url,
+                )
+                assistant_text_parts: list[str] = []
+                tool_call_parts: dict[int, dict[str, str]] = {}
+                self.is_streaming = True
+                publish_event("message_start", {"role": "assistant"}, on_event)
+                try:
+                    for event in self.provider.stream_chat(request):
+                        if event.type == "text_delta":
+                            assistant_text_parts.append(event.delta)
+                            publish_event("message_update", {"delta": event.delta}, on_event)
+                        elif event.type == "tool_call_delta":
+                            index = event.index or 0
+                            current = tool_call_parts.setdefault(index, {"id": "", "name": "", "arguments": ""})
+                            if event.tool_call_id:
+                                current["id"] = event.tool_call_id
+                            if event.tool_name:
+                                current["name"] = event.tool_name
+                            if event.tool_arguments_delta:
+                                current["arguments"] += event.tool_arguments_delta
+                        elif event.type == "usage":
+                            usage = event.usage
+                        elif event.type == "done":
+                            break
+                except ProviderAborted:
+                    self.error = "Request aborted"
+                except Exception as exc:
+                    self.error = str(exc)
+                finally:
+                    self.is_streaming = False
+
+                if self.error is not None:
+                    publish_event("error", {"message": self.error}, on_event)
+                    publish_event("turn_end", {"success": False, "error": self.error}, on_event)
+                    return AgentRunResult(
+                        assistant_messages=assistant_messages,
+                        tool_results=tool_results,
+                        usage=usage,
+                        error=self.error,
+                    )
+
+                tool_calls = [
+                    ToolCall(id=payload["id"], name=payload["name"], arguments=payload["arguments"])
+                    for _, payload in sorted(tool_call_parts.items())
+                    if payload["name"]
+                ]
+                assistant_message = Message(
+                    role="assistant",
+                    content="".join(assistant_text_parts),
+                    tool_calls=tool_calls,
+                    created_at=utc_now(),
+                )
+                self.messages.append(assistant_message)
+                assistant_messages.append(assistant_message)
+                publish_event(
+                    "message_end",
+                    {
+                        "role": "assistant",
+                        "content": assistant_message.content,
+                        "tool_calls": [
+                            {"id": tool_call.id, "name": tool_call.name, "arguments": tool_call.arguments}
+                            for tool_call in tool_calls
+                        ],
+                    },
+                    on_event,
+                )
+                if not tool_calls:
+                    publish_event("turn_end", {"success": True}, on_event)
+                    return AgentRunResult(
+                        assistant_messages=assistant_messages,
+                        tool_results=tool_results,
+                        usage=usage,
+                        error=None,
+                    )
+
+                for tool_call in tool_calls:
+                    self.pending_tool_calls.add(tool_call.id)
+                    publish_event(
+                        "tool_execution_start",
+                        {"id": tool_call.id, "name": tool_call.name, "arguments": tool_call.arguments},
+                        on_event,
+                    )
+                    tool = self.tools.get(tool_call.name)
+                    is_error = False
+                    if tool is None:
+                        rendered = f"ERROR\nUnknown tool: {tool_call.name}"
+                        is_error = True
+                    else:
+                        result = self._tool_executor(tool, tool_call.arguments, self._tool_context())
+                        rendered = format_tool_result(result)
+                        is_error = bool(getattr(result, "is_error", False))
+                    tool_message = Message(
+                        role="tool_result",
+                        content=rendered,
+                        tool_call_id=tool_call.id,
+                        tool_name=tool_call.name,
+                        created_at=utc_now(),
+                    )
+                    self.messages.append(tool_message)
+                    tool_results.append(tool_message)
+                    self.pending_tool_calls.discard(tool_call.id)
+                    publish_event(
+                        "tool_execution_end",
+                        {
+                            "id": tool_call.id,
+                            "name": tool_call.name,
+                            "content": rendered,
+                            "is_error": is_error,
+                        },
+                        on_event,
+                    )
+        finally:
+            self.is_streaming = False
+            publish_event("agent_end", {"error": self.error}, on_event)
 
 
 class Agent:
+    _EXTENSION_COMMAND_USAGES = ["/skill:<name> [request]", "/template:<name>"]
+
     def __init__(
         self,
         config: AgentConfig,
@@ -68,10 +331,12 @@ class Agent:
     ):
         self.config = config
         self.runtime = capability_runtime
-        self._provider_factory = provider_factory or (lambda base_url: OpenAICompatibleProvider(base_url))
-        self.provider = provider or self._provider_factory(config.base_url)
-        self._tool_executor = tool_executor or execute_tool
-        self.conversation_state = AgentConversationState()
+        self._engine = _CoreEngine(
+            config,
+            provider=provider,
+            provider_factory=provider_factory,
+            tool_executor=tool_executor,
+        )
         self.runtime_state = AgentRuntimeState(
             cwd=str(config.cwd),
             runtime_config=ResolvedRuntimeConfig(
@@ -80,20 +345,61 @@ class Agent:
                 system_prompt=config.system_prompt,
             ),
         )
-        self.tools: dict[str, object] = {}
-        self.current_system_prompt = ""
-        self.is_streaming = False
-        self.pending_tool_calls: set[str] = set()
-        self.error: str | None = None
         self._subscribers: list[EventSubscriber] = []
-        self._extension_commands: list[ExtensionCommandSpec] = []
-        self._register_extension_commands()
         if initial_snapshot is not None:
             self.restore(initial_snapshot)
 
     @property
+    def conversation_state(self) -> AgentConversationState:
+        return self._engine.conversation_state
+
+    @property
+    def provider(self) -> object:
+        return self._engine.provider
+
+    @provider.setter
+    def provider(self, value: object) -> None:
+        self._engine.provider = value
+
+    @property
+    def tools(self) -> dict[str, object]:
+        return self._engine.tools
+
+    @tools.setter
+    def tools(self, value: dict[str, object]) -> None:
+        self._engine.tools = dict(value)
+
+    @property
+    def current_system_prompt(self) -> str:
+        return self._engine.current_system_prompt
+
+    @current_system_prompt.setter
+    def current_system_prompt(self, value: str) -> None:
+        self._engine.current_system_prompt = value
+
+    @property
+    def is_streaming(self) -> bool:
+        return self._engine.is_streaming
+
+    @is_streaming.setter
+    def is_streaming(self, value: bool) -> None:
+        self._engine.is_streaming = value
+
+    @property
+    def pending_tool_calls(self) -> set[str]:
+        return self._engine.pending_tool_calls
+
+    @property
+    def error(self) -> str | None:
+        return self._engine.error
+
+    @error.setter
+    def error(self, value: str | None) -> None:
+        self._engine.error = value
+
+    @property
     def messages(self) -> list[Message]:
-        return self.conversation_state.messages
+        return self._engine.messages
 
     @property
     def runtime_config(self) -> ResolvedRuntimeConfig:
@@ -129,21 +435,14 @@ class Agent:
         return unsubscribe
 
     def abort(self) -> None:
-        close_active_stream = getattr(self.provider, "close_active_stream", None)
-        if callable(close_active_stream):
-            close_active_stream()
+        self._engine.abort()
 
     def wait_for_idle(self, timeout: float | None = None) -> bool:
-        deadline = None if timeout is None else monotonic() + timeout
-        while self.is_streaming:
-            if deadline is not None and monotonic() >= deadline:
-                return False
-            sleep(0.01)
-        return True
+        return self._engine.wait_for_idle(timeout)
 
     def snapshot(self) -> AgentSnapshot:
         return AgentSnapshot(
-            conversation=AgentConversationState(messages=clone_messages(self.messages)),
+            conversation=self._engine.snapshot_conversation(),
             runtime=AgentRuntimeState(
                 cwd=self.runtime_state.cwd,
                 runtime_config=clone_resolved_runtime_config(self.runtime_config),
@@ -162,26 +461,28 @@ class Agent:
 
     def restore(self, snapshot: AgentSnapshot) -> None:
         restored = clone_agent_snapshot(snapshot)
-        self.conversation_state = restored.conversation
+        self._engine.restore_conversation(restored.conversation)
         self.runtime_state = restored.runtime
         self.config.cwd = Path(self.runtime_state.cwd)
         self.runtime.cwd = self.config.cwd
-        self.config.model = self.runtime_config.model
-        self.config.base_url = self.runtime_config.base_url
-        self.config.system_prompt = self.runtime_config.system_prompt
-        self.current_system_prompt = ""
+        self._engine.sync_execution_state(
+            self.runtime_config,
+            self.config.cwd,
+            tools=self.tools,
+            current_system_prompt="",
+            rebuild_provider=False,
+        )
         self._refresh_system_prompt()
         self._publish("state_changed", {"reason": "restore"})
 
     def set_model(self, model: str) -> None:
         self.runtime_state.runtime_config.model = model
-        self.config.model = model
+        self._engine.set_model(model)
         self._publish("state_changed", {"reason": "model", "model": model})
 
     def set_base_url(self, base_url: str) -> None:
         self.runtime_state.runtime_config.base_url = base_url
-        self.config.base_url = base_url
-        self.provider = self._provider_factory(base_url)
+        self._engine.set_base_url(base_url)
         self._publish("state_changed", {"reason": "base_url", "base_url": base_url})
 
     def set_system_prompt(self, system_prompt: str) -> ReloadResult:
@@ -195,7 +496,7 @@ class Agent:
         return self.apply_runtime_config(updated_runtime)
 
     def replace_messages(self, messages: list[Message]) -> None:
-        self.conversation_state.messages = clone_messages(messages)
+        self._engine.replace_messages(messages)
         self._publish("state_changed", {"reason": "messages"})
 
     def apply_runtime_config(self, runtime_config: ResolvedRuntimeConfig) -> ReloadResult:
@@ -219,13 +520,15 @@ class Agent:
             )
 
         self.runtime_state.runtime_config = clone_resolved_runtime_config(runtime_config)
-        self.config.model = self.runtime_config.model
-        self.config.base_url = self.runtime_config.base_url
-        self.config.system_prompt = self.runtime_config.system_prompt
         self.config.cwd = Path(self.runtime_state.cwd)
         self.runtime.cwd = self.config.cwd
-        self.provider = self._provider_factory(self.config.base_url)
-        self.tools = snapshot.tools
+        self._engine.sync_execution_state(
+            self.runtime_config,
+            self.config.cwd,
+            tools=snapshot.tools,
+            current_system_prompt="",
+            rebuild_provider=True,
+        )
         self._merge_skill_catalog_snapshot(snapshot.skills)
         self._refresh_system_prompt()
         self._publish(
@@ -303,14 +606,14 @@ class Agent:
                 metadata=merged_metadata,
             )
         )
-        return self._run(on_event=on_event, raw_input=raw_input or text)
+        return self._engine.run(publish_event=self._publish, on_event=on_event, raw_input=raw_input or text)
 
     def continue_from_context(self, on_event: EventCallback | None = None) -> AgentRunResult:
         if not self.messages:
             raise RuntimeError("No messages to continue from")
         if self.messages[-1].role == "assistant":
             raise RuntimeError("Cannot continue from assistant message")
-        return self._run(on_event=on_event, raw_input=None)
+        return self._engine.run(publish_event=self._publish, on_event=on_event, raw_input=None)
 
     def try_handle_extension_command(
         self,
@@ -318,13 +621,34 @@ class Agent:
         *,
         on_event: EventCallback | None = None,
     ) -> CoreCommandResult | None:
-        for command in self._extension_commands:
-            if raw_input.startswith(command.prefix):
-                return command.handler(raw_input, raw_input[len(command.prefix) :], on_event)
+        if raw_input.startswith("/skill:"):
+            remainder = raw_input[len("/skill:") :].strip()
+            if not remainder:
+                return None
+            name, _, request_text = remainder.partition(" ")
+            if not name:
+                return None
+            request_text = request_text.strip()
+            if request_text:
+                try:
+                    result = self.run_skill(name, request_text, raw_input, on_event=on_event)
+                except ValueError as exc:
+                    return CoreCommandResult(message=str(exc), error=str(exc), persist_state=False)
+                return CoreCommandResult(run_result=result, error=result.error, persist_state=True)
+            success, message = self.arm_skill(name, raw_input)
+            return CoreCommandResult(message=message, error=None if success else message, persist_state=False)
+
+        if raw_input.startswith("/template:"):
+            name = raw_input[len("/template:") :].strip()
+            if not name:
+                return None
+            _success, message = self.activate_template(name)
+            return CoreCommandResult(message=message, persist_state=False)
+
         return None
 
     def extension_command_usages(self) -> list[str]:
-        return [command.usage for command in self._extension_commands]
+        return list(self._EXTENSION_COMMAND_USAGES)
 
     def arm_skill(self, name: str, raw_command: str) -> tuple[bool, str]:
         skill, error = self._resolve_triggerable_skill(name)
@@ -337,6 +661,20 @@ class Agent:
     def clear_pending_skill(self) -> None:
         self.runtime_state.pending_skill_trigger = None
         self._publish("state_changed", {"reason": "pending_skill", "name": None})
+
+    def run_skill(
+        self,
+        name: str,
+        request_text: str,
+        raw_command: str,
+        *,
+        on_event: EventCallback | None = None,
+    ) -> AgentRunResult:
+        success, rewritten, metadata = self.build_skill_prompt(name, request_text, raw_command)
+        if not success:
+            raise ValueError(rewritten)
+        self.clear_pending_skill()
+        return self.prompt(rewritten, metadata=metadata, raw_input=raw_command, on_event=on_event)
 
     def build_skill_prompt(self, name: str, user_text: str, raw_command: str) -> tuple[bool, str, dict[str, object] | None]:
         skill, error = self._resolve_triggerable_skill(name)
@@ -393,7 +731,7 @@ class Agent:
             fragments.append(
                 PromptInspectionFragment(
                     key=catalog_key,
-                    source="agent-core",
+                    source="coding-agent",
                     text_length=len(catalog_text),
                 )
             )
@@ -465,243 +803,8 @@ class Agent:
                 },
             )
 
-    def _register_extension_commands(self) -> None:
-        self._extension_commands = [
-            ExtensionCommandSpec(
-                prefix="/skill:",
-                usage="/skill:<name> [request]",
-                handler=self._handle_skill_extension_command,
-            ),
-            ExtensionCommandSpec(
-                prefix="/template:",
-                usage="/template:<name>",
-                handler=self._handle_template_extension_command,
-            ),
-        ]
-
-    def _handle_skill_extension_command(
-        self,
-        raw_input: str,
-        suffix: str,
-        on_event: EventCallback | None,
-    ) -> CoreCommandResult | None:
-        remainder = suffix.strip()
-        if not remainder:
-            return None
-        name, _, request_text = remainder.partition(" ")
-        if not name:
-            return None
-        request_text = request_text.strip()
-        if request_text:
-            success, rewritten, metadata = self.build_skill_prompt(name, request_text, raw_input)
-            if not success:
-                return CoreCommandResult(message=rewritten, persist_state=False)
-            self.clear_pending_skill()
-            result = self.prompt(rewritten, metadata=metadata, raw_input=raw_input, on_event=on_event)
-            return CoreCommandResult(run_result=result, error=result.error, persist_state=True)
-        success, message = self.arm_skill(name, raw_input)
-        return CoreCommandResult(message=message, error=None if success else message, persist_state=False)
-
-    def _handle_template_extension_command(
-        self,
-        _raw_input: str,
-        suffix: str,
-        _on_event: EventCallback | None,
-    ) -> CoreCommandResult | None:
-        name = suffix.strip()
-        if not name:
-            return None
-        _success, message = self.activate_template(name)
-        return CoreCommandResult(message=message, persist_state=False)
-
     def _refresh_system_prompt(self) -> None:
         self.current_system_prompt = self.inspect_prompt().assembled
-
-    def _build_provider_messages(self) -> list[dict[str, object]]:
-        messages: list[dict[str, object]] = []
-        if self.current_system_prompt:
-            messages.append({"role": "system", "content": self.current_system_prompt})
-        for message in self.messages:
-            if message.role == "user":
-                messages.append({"role": "user", "content": message.content})
-            elif message.role == "assistant":
-                payload: dict[str, object] = {"role": "assistant", "content": message.content or None}
-                if message.tool_calls:
-                    payload["tool_calls"] = [
-                        {
-                            "id": tool_call.id,
-                            "type": "function",
-                            "function": {"name": tool_call.name, "arguments": tool_call.arguments},
-                        }
-                        for tool_call in message.tool_calls
-                    ]
-                messages.append(payload)
-            elif message.role == "tool_result":
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": message.tool_call_id,
-                        "content": message.content,
-                    }
-                )
-        return messages
-
-    def _build_provider_tools(self) -> list[dict[str, object]]:
-        return [
-            {
-                "type": "function",
-                "function": {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "parameters": tool.schema,
-                },
-            }
-            for tool in self.tools.values()
-        ]
-
-    def _tool_context(self) -> ToolContext:
-        cwd = Path(self.runtime_state.cwd)
-        return ToolContext(
-            cwd=cwd,
-            workspace_root=cwd,
-            timeout_seconds=self.runtime_config.tools.bash_timeout_seconds,
-            max_output_bytes=self.runtime_config.tools.bash_max_output_bytes,
-            read_max_lines=self.runtime_config.tools.read_max_lines,
-        )
-
-    def _run(
-        self,
-        *,
-        on_event: EventCallback | None = None,
-        raw_input: str | None = None,
-    ) -> AgentRunResult:
-        assistant_messages: list[Message] = []
-        tool_results: list[Message] = []
-        usage: dict[str, object] | None = None
-        self.error = None
-        self._publish("agent_start", {"raw_input": raw_input}, on_event)
-        self._publish("turn_start", {"message_count": len(self.messages)}, on_event)
-        try:
-            while True:
-                request = ProviderRequest(
-                    model=self.config.model,
-                    messages=self._build_provider_messages(),
-                    tools=self._build_provider_tools(),
-                    api_key=self.config.api_key,
-                    base_url=self.config.base_url,
-                )
-                assistant_text_parts: list[str] = []
-                tool_call_parts: dict[int, dict[str, str]] = {}
-                self.is_streaming = True
-                self._publish("message_start", {"role": "assistant"}, on_event)
-                try:
-                    for event in self.provider.stream_chat(request):
-                        if event.type == "text_delta":
-                            assistant_text_parts.append(event.delta)
-                            self._publish("message_update", {"delta": event.delta}, on_event)
-                        elif event.type == "tool_call_delta":
-                            index = event.index or 0
-                            current = tool_call_parts.setdefault(index, {"id": "", "name": "", "arguments": ""})
-                            if event.tool_call_id:
-                                current["id"] = event.tool_call_id
-                            if event.tool_name:
-                                current["name"] = event.tool_name
-                            if event.tool_arguments_delta:
-                                current["arguments"] += event.tool_arguments_delta
-                        elif event.type == "usage":
-                            usage = event.usage
-                        elif event.type == "done":
-                            break
-                except ProviderAborted:
-                    self.error = "Request aborted"
-                except Exception as exc:
-                    self.error = str(exc)
-                finally:
-                    self.is_streaming = False
-
-                if self.error is not None:
-                    self._publish("error", {"message": self.error}, on_event)
-                    self._publish("turn_end", {"success": False, "error": self.error}, on_event)
-                    return AgentRunResult(
-                        assistant_messages=assistant_messages,
-                        tool_results=tool_results,
-                        usage=usage,
-                        error=self.error,
-                    )
-
-                tool_calls = [
-                    ToolCall(id=payload["id"], name=payload["name"], arguments=payload["arguments"])
-                    for _, payload in sorted(tool_call_parts.items())
-                    if payload["name"]
-                ]
-                assistant_message = Message(
-                    role="assistant",
-                    content="".join(assistant_text_parts),
-                    tool_calls=tool_calls,
-                    created_at=utc_now(),
-                )
-                self.messages.append(assistant_message)
-                assistant_messages.append(assistant_message)
-                self._publish(
-                    "message_end",
-                    {
-                        "role": "assistant",
-                        "content": assistant_message.content,
-                        "tool_calls": [
-                            {"id": tool_call.id, "name": tool_call.name, "arguments": tool_call.arguments}
-                            for tool_call in tool_calls
-                        ],
-                    },
-                    on_event,
-                )
-                if not tool_calls:
-                    self._publish("turn_end", {"success": True}, on_event)
-                    return AgentRunResult(
-                        assistant_messages=assistant_messages,
-                        tool_results=tool_results,
-                        usage=usage,
-                        error=None,
-                    )
-
-                for tool_call in tool_calls:
-                    self.pending_tool_calls.add(tool_call.id)
-                    self._publish(
-                        "tool_execution_start",
-                        {"id": tool_call.id, "name": tool_call.name, "arguments": tool_call.arguments},
-                        on_event,
-                    )
-                    tool = self.tools.get(tool_call.name)
-                    is_error = False
-                    if tool is None:
-                        rendered = f"ERROR\nUnknown tool: {tool_call.name}"
-                        is_error = True
-                    else:
-                        result = self._tool_executor(tool, tool_call.arguments, self._tool_context())
-                        rendered = format_tool_result(result)
-                        is_error = bool(getattr(result, "is_error", False))
-                    tool_message = Message(
-                        role="tool_result",
-                        content=rendered,
-                        tool_call_id=tool_call.id,
-                        tool_name=tool_call.name,
-                        created_at=utc_now(),
-                    )
-                    self.messages.append(tool_message)
-                    tool_results.append(tool_message)
-                    self.pending_tool_calls.discard(tool_call.id)
-                    self._publish(
-                        "tool_execution_end",
-                        {
-                            "id": tool_call.id,
-                            "name": tool_call.name,
-                            "content": rendered,
-                            "is_error": is_error,
-                        },
-                        on_event,
-                    )
-        finally:
-            self.is_streaming = False
-            self._publish("agent_end", {"error": self.error}, on_event)
 
     def _build_skill_catalog_text(self) -> str:
         if "read" not in self.tools:

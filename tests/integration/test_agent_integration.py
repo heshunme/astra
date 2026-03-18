@@ -153,7 +153,7 @@ def test_agent_wait_for_idle_returns_immediately_when_not_streaming(tmp_path: Pa
     assert agent.wait_for_idle(timeout=0.01)
 
 
-def test_agent_inline_skill_command_runs_through_core_extension_handler(tmp_path: Path, runtime_config_factory) -> None:
+def test_agent_run_skill_executes_through_typed_service_api(tmp_path: Path, runtime_config_factory) -> None:
     cwd = tmp_path / "workspace"
     skill_dir = cwd / ".astra" / "skills" / "review"
     skill_dir.mkdir(parents=True)
@@ -173,11 +173,9 @@ prompt_files:
     provider = RecordingProvider([ProviderEvent(type="text_delta", delta="done"), ProviderEvent(type="done")])
     agent.provider = provider
 
-    result = agent.try_handle_extension_command("/skill:review Review src/demo.py for issues.")
+    result = agent.run_skill("review", "Review src/demo.py for issues.", "/skill:review Review src/demo.py for issues.")
 
-    assert result is not None
-    assert result.run_result is not None
-    assert result.run_result.error is None
+    assert result.error is None
     assert provider.requests
     sent_messages = provider.requests[0].messages
     assert sent_messages[0]["role"] == "system"
@@ -205,9 +203,9 @@ prompt_files:
 
     agent = _build_agent(cwd, runtime_config_factory())
 
-    armed = agent.try_handle_extension_command("/skill:debug")
-    assert armed is not None
-    assert armed.message == "Next message will use skill: debug"
+    success, message = agent.arm_skill("debug", "/skill:debug")
+    assert success
+    assert message == "Next message will use skill: debug"
     assert agent.pending_skill_name == "debug"
 
     consumed, rewritten, metadata = agent.consume_pending_skill_prompt("Investigate why tests fail.")

@@ -319,6 +319,52 @@ def read_cli_line(prompt: str = "astra> ") -> str:
         return bytes(raw_line).decode("utf-8", errors="replace").rstrip("\r\n")
 
 
+def handle_extension_command(agent: Agent, line: str, run_streaming: Callable[[Callable[[], object]], object]) -> tuple[bool, bool]:
+    if line.startswith("/skill:"):
+        remainder = line[len("/skill:") :].strip()
+        if not remainder:
+            return False, False
+        name, _, request_text = remainder.partition(" ")
+        if not name:
+            return False, False
+        request_text = request_text.strip()
+        if request_text:
+            try:
+                result = run_streaming(lambda: agent.run_skill(name, request_text, line))
+            except ValueError as exc:
+                print(str(exc))
+                return True, False
+            print()
+            if result.error:
+                print(result.error, file=sys.stderr)
+            return True, True
+
+        success, message = agent.arm_skill(name, line)
+        print(message)
+        return True, False
+
+    if line.startswith("/template:"):
+        name = line[len("/template:") :].strip()
+        if not name:
+            return False, False
+        _success, message = agent.activate_template(name)
+        print(message)
+        return True, False
+
+    result = run_streaming(lambda: agent.try_handle_extension_command(line))
+    if result is None:
+        return False, False
+    if result.message:
+        print(result.message)
+    if result.run_result is not None:
+        print()
+        if result.run_result.error:
+            print(result.run_result.error, file=sys.stderr)
+    return True, result.persist_state
+
+    return False, False
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -523,24 +569,6 @@ def main(
             print(result.error, file=sys.stderr)
         persist_agent_state(create_if_needed=True)
         return result
-
-    def run_extension_command(line: str) -> bool:
-        if not line.startswith("/"):
-            return False
-        result = run_streaming(lambda: agent.try_handle_extension_command(line))
-        if result is None:
-            return False
-        if result.message:
-            print(result.message)
-        if result.run_result is not None:
-            print()
-            if result.run_result.error:
-                print(result.run_result.error, file=sys.stderr)
-        if result.persist_state:
-            persist_agent_state(create_if_needed=True)
-        elif session_state.materialized:
-            persist_agent_state()
-        return True
 
     def register_commands() -> None:
         def help_command(_line: str) -> bool:
@@ -758,7 +786,12 @@ def main(
                 continue
             if line.startswith("/") and command_registry.dispatch(line):
                 continue
-            if run_extension_command(line):
+            handled_extension, create_session = handle_extension_command(agent, line, run_streaming)
+            if handled_extension:
+                if create_session:
+                    persist_agent_state(create_if_needed=True)
+                elif session_state.materialized:
+                    persist_agent_state()
                 continue
             run_user_prompt(line)
         except EOFError:
