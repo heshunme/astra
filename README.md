@@ -66,6 +66,8 @@ For a current architecture survey in Chinese, see `docs/architecture.zh-CN.md`.
 ## Evolution direction
 The project is moving toward a reusable core engine plus a thin application layer, while the near-term product priority is self-evolving agent infrastructure. See `docs/evolution_strategy.md` for the detailed direction and layering rules.
 
+The first non-CLI self-evolution entrypoint is the application-layer `SkillEvolutionService`. It can inspect an `AgentSnapshot`, derive a reusable project skill from the latest completed normal turn, and create or update `.astra/skills/<slug>/skill.yaml` plus `checklist.md` without changing the core loop or CLI command surface.
+
 ## Session storage
 
 Sessions are stored under `~/.astra-python/sessions` by default.
@@ -145,6 +147,8 @@ context_files:
 ```
 
 Skill files stay on disk until the model reads them with the `read` tool. Astra injects a generated skill catalog into the system prompt on every turn so the model knows which skills are available, what they are for, and which files to read on demand.
+
+Application-layer evolution currently writes project skills into the same `.astra/skills/*/` layout, so generated skills are picked up by the existing runtime discovery flow after a reload.
 
 ## Runtime inspection
 

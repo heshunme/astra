@@ -9,6 +9,7 @@ from .config import (
     RuntimeConfig,
     ToolRuntimeConfig,
 )
+from .evolution import EvolutionOutcome, EvolutionRequest, ExperienceRecord, SkillEvolutionService, SkillMutationPlan
 from .models import AgentEvent, AgentSnapshot, CoreCommandResult
 from .provider import OpenAICompatibleProvider
 from .runtime import CapabilityRuntime, CommandRegistry, CommandSpec, PrefixCommandSpec
@@ -26,6 +27,9 @@ __all__ = [
     "ConfigError",
     "ConfigManager",
     "CoreCommandResult",
+    "EvolutionOutcome",
+    "EvolutionRequest",
+    "ExperienceRecord",
     "OpenAICompatibleProvider",
     "PrefixCommandSpec",
     "PromptRuntimeConfig",
@@ -33,6 +37,8 @@ __all__ = [
     "ResolvedRuntimeConfig",
     "RuntimeConfig",
     "SessionStore",
+    "SkillEvolutionService",
+    "SkillMutationPlan",
     "ToolRuntimeConfig",
     "build_default_tools",
 ]

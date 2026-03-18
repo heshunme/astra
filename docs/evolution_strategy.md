@@ -25,13 +25,6 @@ In this project, self-evolution does not mean rewriting the core decision loop. 
 - tools
 - extensions, including extension code when that is part of the artifact surface
 
-The preferred closed loop is:
-
-1. derive structured experience from completed work
-2. persist it in a workspace-scoped store
-3. inspect what was stored
-4. use accepted experience to generate, refine, select, or activate higher-level artifacts under explicit policy
-
 ## Layering
 
 Target architecture:
@@ -54,4 +47,3 @@ Current implementation:
 - Prefer evolving artifacts over changing the core loop.
 - Prefer adding narrow hooks to the core over embedding more fixed product policy into `src/astra/agent.py`.
 - Add generic hooks only when they directly help separate engine behavior from self-evolution policy.
-- Avoid designs that make future extraction of `transformContext`-style or `convertToLlm`-style seams harder.
