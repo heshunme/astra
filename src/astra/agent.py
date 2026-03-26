@@ -13,7 +13,6 @@ from .models import (
     AgentRunResult,
     AgentRuntimeState,
     AgentSnapshot,
-    CoreCommandResult,
     Message,
     PendingSkillTriggerState,
     SkillCatalogEntry,
@@ -322,8 +321,6 @@ class _CoreEngine:
 
 
 class Agent:
-    _EXTENSION_COMMAND_USAGES = ["/skill:<name> [request]", "/template:<name> <request>"]
-
     def __init__(
         self,
         config: AgentConfig,
@@ -631,50 +628,6 @@ class Agent:
         if self.messages[-1].role == "assistant":
             raise RuntimeError("Cannot continue from assistant message")
         return self._engine.run(publish_event=self._publish, on_event=on_event, raw_input=None)
-
-    def try_handle_extension_command(
-        self,
-        raw_input: str,
-        *,
-        on_event: EventCallback | None = None,
-    ) -> CoreCommandResult | None:
-        if raw_input.startswith("/skill:"):
-            remainder = raw_input[len("/skill:") :].strip()
-            if not remainder:
-                return None
-            name, _, request_text = remainder.partition(" ")
-            if not name:
-                return None
-            request_text = request_text.strip()
-            if request_text:
-                try:
-                    result = self.run_skill(name, request_text, raw_input, on_event=on_event)
-                except ValueError as exc:
-                    return CoreCommandResult(message=str(exc), error=str(exc), persist_state=False)
-                return CoreCommandResult(run_result=result, error=result.error, persist_state=True)
-            success, message = self.arm_skill(name, raw_input)
-            return CoreCommandResult(message=message, error=None if success else message, persist_state=False)
-
-        if raw_input.startswith("/template:"):
-            name = raw_input[len("/template:") :].strip()
-            if not name:
-                usage = "Usage: /template:<name> <request>"
-                return CoreCommandResult(message=usage, error=usage, persist_state=False)
-            name, _, request_text = name.partition(" ")
-            request_text = request_text.strip()
-            if not name or not request_text:
-                usage = "Usage: /template:<name> <request>"
-                return CoreCommandResult(message=usage, error=usage, persist_state=False)
-            try:
-                result = self.run_template(name, request_text, raw_input, on_event=on_event)
-            except ValueError as exc:
-                return CoreCommandResult(message=str(exc), error=str(exc), persist_state=False)
-            return CoreCommandResult(run_result=result, error=result.error, persist_state=True)
-
-        return None
-
-    def extension_command_usages(self) -> list[str]:
-        return list(self._EXTENSION_COMMAND_USAGES)
 
     def arm_skill(self, name: str, raw_command: str) -> tuple[bool, str]:
         skill, error = self._resolve_triggerable_skill(name)

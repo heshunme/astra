@@ -1,42 +1,24 @@
 from __future__ import annotations
 
 import argparse
-import importlib
 import json
 import os
 import signal
 import sys
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
-from .agent import Agent, AgentConfig
-from .config import (
-    ConfigError,
-    ConfigManager,
-    DotenvError,
-    ResolvedRuntimeConfig,
-    RuntimeConfig,
-    clone_resolved_runtime_config,
-    merged_env,
-    resolve_runtime_config,
+from .app import (
+    AgentFactory,
+    AstraApp,
+    AstraAppOptions,
+    ConfigManagerFactory,
+    RuntimeFactory,
+    SessionStoreFactory,
 )
-from .models import AgentEvent, Session
-from .runtime import CapabilityRuntime, CommandRegistry, CommandSpec
-from .session import SessionStore, agent_snapshot_to_dict, agent_snapshot_from_dict, apply_agent_snapshot_to_session, session_to_agent_snapshot
-
-
-AgentFactory = Callable[[AgentConfig, CapabilityRuntime], Agent]
-RuntimeFactory = Callable[[Path], CapabilityRuntime]
-SessionStoreFactory = Callable[[], SessionStore]
-ConfigManagerFactory = Callable[[], ConfigManager]
-
-
-@dataclass(slots=True)
-class CliSessionState:
-    session: Session
-    materialized: bool = False
+from .cli_commands import CommandRegistry, CommandSpec
+from .models import AgentEvent, AgentRunResult, SessionSummary
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -95,15 +77,9 @@ def _display_timestamp(value: str) -> str:
     return parsed.strftime("%Y-%m-%d %H:%MZ")
 
 
-def _normalize_cwd(raw_path: str | Path) -> str:
-    try:
-        return str(Path(raw_path).resolve())
-    except OSError:
-        return str(raw_path)
-
-
-def print_sessions(store: SessionStore, current_session_id: str | None = None) -> None:
-    sessions = store.list()
+def print_sessions(app: AstraApp) -> None:
+    sessions = app.list_sessions()
+    current_session_id = app.current_session_id()
     if not sessions:
         print("No sessions")
         return
@@ -136,8 +112,29 @@ def print_sessions(store: SessionStore, current_session_id: str | None = None) -
         print("* current session")
 
 
-def print_reload_summary(agent: Agent, message: str, warnings: list[str] | None = None) -> None:
-    summary = agent.inspect_runtime()
+def build_runtime_summary(app: AstraApp) -> dict[str, object]:
+    return app.get_runtime_summary()
+
+
+def build_runtime_prompt_summary(app: AstraApp) -> dict[str, object]:
+    summary = app.get_runtime_prompt_summary()
+    return {
+        "assembled": summary.assembled,
+        "char_length": summary.char_length,
+        "fragment_count": summary.fragment_count,
+        "fragments": [
+            {
+                "key": fragment.key,
+                "source": fragment.source,
+                "text_length": fragment.text_length,
+            }
+            for fragment in summary.fragments
+        ],
+    }
+
+
+def print_reload_summary(app: AstraApp, message: str, warnings: list[str] | None = None) -> None:
+    summary = build_runtime_summary(app)
     conflicts = summary["skills"]["conflicts"]
     print(message)
     print(f"model={summary['model']}")
@@ -157,19 +154,21 @@ def print_reload_summary(agent: Agent, message: str, warnings: list[str] | None 
         print(f"warning={warning}")
 
 
-def print_tools_summary(agent: Agent) -> None:
-    summary = agent.inspect_runtime()
+def print_tools_summary(app: AstraApp) -> None:
+    summary = app.get_tools_summary()
+    defaults = summary["tool_defaults"]
     print("Tools summary")
     print(f"tools={', '.join(summary['tools']) or '(none)'}")
-    print(f"read.max_lines={summary['tool_defaults']['read_max_lines']}")
-    print(f"bash.timeout_seconds={summary['tool_defaults']['bash_timeout_seconds']}")
-    print(f"bash.max_output_bytes={summary['tool_defaults']['bash_max_output_bytes']}")
+    print(f"read.max_lines={defaults['read_max_lines']}")
+    print(f"bash.timeout_seconds={defaults['bash_timeout_seconds']}")
+    print(f"bash.max_output_bytes={defaults['bash_max_output_bytes']}")
 
 
-def print_skills_list(agent: Agent) -> None:
-    skills = agent.available_skills()
+def print_skills_list(app: AstraApp) -> None:
+    summary = build_runtime_summary(app)
+    skills = app.get_skills()
     print("Skills")
-    if "read" not in agent.tools and skills:
+    if "read" not in summary["tools"] and skills:
         print("/skill:<name> is unavailable because the read tool is disabled.")
         print("Enable the read tool to use discovered skills.")
         return
@@ -187,8 +186,8 @@ def print_skills_list(agent: Agent) -> None:
             print(f"  Shadowed definitions: {len(entry.shadowed_sources)}")
 
 
-def print_templates_list(agent: Agent) -> None:
-    templates = agent.runtime.list_template_names()
+def print_templates_list(app: AstraApp) -> None:
+    templates = app.get_templates()
     print("Templates")
     if not templates:
         print("No templates available.")
@@ -198,8 +197,8 @@ def print_templates_list(agent: Agent) -> None:
         print(f"- {name}")
 
 
-def print_runtime_config_summary(agent: Agent) -> None:
-    summary = agent.inspect_runtime()
+def print_runtime_config_summary(app: AstraApp) -> None:
+    summary = build_runtime_summary(app)
     print("Runtime config")
     print(f"model={summary['model']}")
     print(f"base_url={summary['base_url']}")
@@ -209,42 +208,8 @@ def print_runtime_config_summary(agent: Agent) -> None:
     print(f"bash.max_output_bytes={summary['tool_defaults']['bash_max_output_bytes']}")
 
 
-def print_resume_sessions(store: SessionStore, current_cwd: Path):
-    normalized_cwd = _normalize_cwd(current_cwd)
-    sessions = [session for session in store.list() if _normalize_cwd(session.cwd) == normalized_cwd]
-    if not sessions:
-        print("No sessions")
-        return []
-
-    print("Sessions")
-    for index, session in enumerate(sessions, start=1):
-        print(f"{index}. {session.name or '(unnamed)'}")
-    return sessions
-
-
-def build_runtime_summary(agent: Agent) -> dict[str, object]:
-    return agent.inspect_runtime()
-
-
-def build_runtime_prompt_summary(agent: Agent) -> dict[str, object]:
-    inspection = agent.inspect_prompt()
-    return {
-        "assembled": inspection.assembled,
-        "char_length": len(inspection.assembled),
-        "fragment_count": len(inspection.fragments),
-        "fragments": [
-            {
-                "key": fragment.key,
-                "source": fragment.source,
-                "text_length": fragment.text_length,
-            }
-            for fragment in inspection.fragments
-        ],
-    }
-
-
-def print_runtime_summary(agent: Agent, show_warnings_only: bool = False) -> None:
-    summary = build_runtime_summary(agent)
+def print_runtime_summary(app: AstraApp, show_warnings_only: bool = False) -> None:
+    summary = build_runtime_summary(app)
     warnings = summary["warnings"]
     prompt_summary = summary["prompts"]
     skill_summary = summary["skills"]
@@ -273,28 +238,24 @@ def print_runtime_summary(agent: Agent, show_warnings_only: bool = False) -> Non
     print(f"warnings.count={len(warnings)}")
 
 
-def print_runtime_prompt(agent: Agent) -> None:
-    inspection = agent.inspect_prompt()
-    prompt_summary = build_runtime_prompt_summary(agent)
-    fragments = prompt_summary["fragments"]
-    prompt_fragments = agent.runtime.snapshot().prompt_fragments
+def print_runtime_prompt(app: AstraApp) -> None:
+    inspection = app.get_runtime_prompt_summary()
     print("Runtime prompt")
-    print(f"fragments={prompt_summary['fragment_count']}")
-    print(f"char_length={prompt_summary['char_length']}")
-    if isinstance(fragments, list) and fragments:
-        for index, fragment in enumerate(fragments, start=1):
-            print(
-                f"fragment[{index}]={fragment['key']} source={fragment['source']} chars={fragment['text_length']}"
-            )
+    print(f"fragments={inspection.fragment_count}")
+    print(f"char_length={inspection.char_length}")
+    if inspection.fragments:
+        for index, fragment in enumerate(inspection.fragments, start=1):
+            print(f"fragment[{index}]={fragment.key} source={fragment.source} chars={fragment.text_length}")
     else:
         print("fragments=(none)")
     print("assembled_with_boundaries:")
     if inspection.fragments:
         total = len(inspection.fragments)
         for index, fragment in enumerate(inspection.fragments, start=1):
-            print(f"----- fragment[{index}/{total}] BEGIN key={fragment.key} source={fragment.source} chars={fragment.text_length} -----")
-            prompt_fragment = prompt_fragments.get(fragment.key)
-            text = prompt_fragment.text.strip() if prompt_fragment is not None else agent.prompt_fragment_text(fragment.key)
+            print(
+                f"----- fragment[{index}/{total}] BEGIN key={fragment.key} source={fragment.source} chars={fragment.text_length} -----"
+            )
+            text = app.prompt_fragment_text(fragment.key)
             if text:
                 print(text)
             else:
@@ -323,29 +284,38 @@ def read_cli_line(prompt: str = "astra> ") -> str:
         return bytes(raw_line).decode("utf-8", errors="replace").rstrip("\r\n")
 
 
-def handle_extension_command(agent: Agent, line: str, run_streaming: Callable[[Callable[[], object]], object]) -> tuple[bool, bool]:
+def print_help(app: AstraApp) -> None:
+    for entry in app.help_entries():
+        print(entry.usage)
+
+
+def _print_run_result(result: AgentRunResult) -> None:
+    print()
+    if result.error:
+        print(result.error, file=sys.stderr)
+
+
+def handle_extension_command(app: AstraApp, line: str, run_streaming: Callable[[Callable[[], Any]], Any]) -> bool:
     if line.startswith("/skill:"):
         remainder = line[len("/skill:") :].strip()
         if not remainder:
-            return False, False
+            return False
         name, _, request_text = remainder.partition(" ")
         if not name:
-            return False, False
+            return False
         request_text = request_text.strip()
         if request_text:
             try:
-                result = run_streaming(lambda: agent.run_skill(name, request_text, line))
+                result = run_streaming(lambda: app.run_skill(name, request_text))
             except ValueError as exc:
                 print(str(exc))
-                return True, False
-            print()
-            if result.error:
-                print(result.error, file=sys.stderr)
-            return True, True
+                return True
+            _print_run_result(result)
+            return True
 
-        success, message = agent.arm_skill(name, line)
-        print(message)
-        return True, False
+        result = app.arm_skill(name)
+        print(result.message)
+        return True
 
     if line.startswith("/template:"):
         remainder = line[len("/template:") :].strip()
@@ -353,29 +323,43 @@ def handle_extension_command(agent: Agent, line: str, run_streaming: Callable[[C
         request_text = request_text.strip()
         if not name or not request_text:
             print("Usage: /template:<name> <request>")
-            return True, False
+            return True
         try:
-            result = run_streaming(lambda: agent.run_template(name, request_text, line))
+            result = run_streaming(lambda: app.run_template(name, request_text))
         except ValueError as exc:
             print(str(exc))
-            return True, False
-        print()
-        if result.error:
-            print(result.error, file=sys.stderr)
-        return True, True
+            return True
+        _print_run_result(result)
+        return True
 
-    result = run_streaming(lambda: agent.try_handle_extension_command(line))
-    if result is None:
-        return False, False
-    if result.message:
-        print(result.message)
-    if result.run_result is not None:
-        print()
-        if result.run_result.error:
-            print(result.run_result.error, file=sys.stderr)
-    return True, result.persist_state
+    return False
 
-    return False, False
+
+def run_user_prompt(app: AstraApp, run_streaming: Callable[[Callable[[], Any]], Any], text: str) -> AgentRunResult:
+    result = run_streaming(lambda: app.submit_prompt(text))
+    _print_run_result(result)
+    return result
+
+
+def print_resume_sessions(app: AstraApp) -> list[SessionSummary]:
+    candidates = app.list_resume_candidates()
+    if not candidates:
+        print("No sessions")
+        return []
+
+    print("Sessions")
+    for index, session in enumerate(candidates, start=1):
+        print(f"{index}. {session.name or '(unnamed)'}")
+    return [
+        SessionSummary(
+            id=session.id,
+            name=session.name,
+            cwd=session.cwd,
+            updated_at=session.updated_at,
+            parent_session_id=session.parent_session_id,
+        )
+        for session in candidates
+    ]
 
 
 def main(
@@ -387,211 +371,43 @@ def main(
     config_manager_factory: ConfigManagerFactory | None = None,
 ) -> None:
     args = parse_args(argv or sys.argv[1:])
-    cli_model_override = args.model
-    cli_base_url_override = args.base_url
-    cli_system_prompt_override = args.system_prompt
-    runtime_builder = runtime_factory or CapabilityRuntime
-    store_builder = session_store_factory or SessionStore
-    config_builder = config_manager_factory or ConfigManager
-    cwd = Path(args.cwd).resolve()
-    store = store_builder()
-    config_manager = config_builder()
-    runtime_env: dict[str, str] = {}
-
-    def load_env() -> dict[str, str]:
-        try:
-            return merged_env(cwd, env=os.environ)
-        except DotenvError as exc:
-            print(f"Warning: {exc}", file=sys.stderr)
-            return dict(os.environ)
-
-    def load_runtime() -> ResolvedRuntimeConfig:
-        nonlocal config_manager, runtime_env
-        runtime_env = load_env()
-        try:
-            raw_config = config_manager.load(cwd)
-        except ConfigError as exc:
-            print(f"Warning: {exc}", file=sys.stderr)
-            raw_config = RuntimeConfig()
-        return resolve_runtime_config(
-            raw_config,
-            cli_model_override,
-            cli_base_url_override,
-            cli_system_prompt_override,
-            env=runtime_env,
-        )
-
-    runtime_config = load_runtime()
-    api_key = runtime_env.get("OPENAI_API_KEY")
-    if not api_key:
-        raise SystemExit("OPENAI_API_KEY is required")
-
-    capability_runtime = runtime_builder(cwd)
-    agent_builder = agent_factory or (lambda cfg, runtime: Agent(cfg, runtime))
-    agent = agent_builder(
-        AgentConfig(
-            model=runtime_config.model,
-            api_key=api_key,
-            base_url=runtime_config.base_url,
-            cwd=cwd,
-            system_prompt=runtime_config.system_prompt,
+    app = AstraApp(
+        AstraAppOptions(
+            cwd=args.cwd,
+            session_id=args.session,
+            new_session=args.new_session,
+            model_override=args.model,
+            base_url_override=args.base_url,
+            system_prompt_override=args.system_prompt,
         ),
-        capability_runtime,
+        agent_factory=agent_factory,
+        runtime_factory=runtime_factory,
+        session_store_factory=session_store_factory,
+        config_manager_factory=config_manager_factory,
     )
-
-    session_state = CliSessionState(
-        session=store.create(cwd=str(cwd), model=runtime_config.model, system_prompt=runtime_config.system_prompt),
-        materialized=False,
-    )
-
-    def current_session_id() -> str | None:
-        if not session_state.materialized:
-            return None
-        return session_state.session.id
-
-    def print_help() -> None:
-        for line in command_registry.help_lines():
-            print(line)
-        for line in agent.extension_command_usages():
-            print(line)
-
-    def _set_default_session_name(text: str) -> None:
-        if session_state.materialized:
-            return
-        if (session_state.session.name or "").strip():
-            return
-        normalized = text.strip()
-        if normalized:
-            session_state.session.name = normalized
-
-    def persist_agent_state(create_if_needed: bool = False) -> bool:
-        if not session_state.materialized and not create_if_needed:
-            return False
-        if not session_state.materialized and not agent.messages:
-            return False
-        apply_agent_snapshot_to_session(session_state.session, agent.snapshot())
-        store.save(session_state.session)
-        session_state.materialized = True
-        return True
-
-    def restore_session(session: Session) -> bool:
-        snapshot = session_to_agent_snapshot(session, agent.runtime_config)
-        agent.restore(snapshot)
-        resumed_runtime = clone_resolved_runtime_config(snapshot.runtime.runtime_config)
-        result = agent.apply_runtime_config(resumed_runtime)
-        if not result.success:
-            print(f"Failed to restore session: {result.message}")
-            return False
-        session_state.session = session
-        session_state.materialized = True
-        return True
-
-    startup_reload = agent.apply_runtime_config(runtime_config)
-    if not startup_reload.success:
-        print(f"Warning: {startup_reload.message}", file=sys.stderr)
-    elif startup_reload.warnings:
-        for warning in startup_reload.warnings:
-            print(f"Warning: {warning}", file=sys.stderr)
-
-    if args.session and not args.new_session:
-        loaded_session = store.load(args.session)
-        if not restore_session(loaded_session):
-            raise SystemExit(1)
+    startup_result = app.startup()
+    for warning in startup_result.warnings:
+        print(f"Warning: {warning}", file=sys.stderr)
 
     command_registry = CommandRegistry()
 
     def handle_sigint(_signum: int, _frame: object) -> None:
-        if agent.is_streaming:
-            agent.abort()
+        if app.is_streaming:
+            app.abort()
             print("\n[aborted]", flush=True)
             return
         raise KeyboardInterrupt
 
-    def run_streaming(callable_: Callable[[], object]) -> object:
-        unsubscribe = agent.subscribe(stream_event)
+    def run_streaming(callable_: Callable[[], Any]) -> Any:
+        unsubscribe = app.subscribe(stream_event)
         try:
             return callable_()
         finally:
             unsubscribe()
 
-    def reload_runtime_from_config() -> None:
-        if agent.is_streaming:
-            print("Cannot reload while a response is streaming.")
-            return
-        resolved_runtime = load_runtime()
-        result = agent.apply_runtime_config(resolved_runtime)
-        if result.success:
-            print_reload_summary(agent, result.message, result.warnings)
-            if session_state.materialized:
-                persist_agent_state()
-        else:
-            print(f"Reload failed: {result.message}")
-
-    def reload_code_modules() -> None:
-        nonlocal agent, config_manager
-        if agent.is_streaming:
-            print("Cannot reload while a response is streaming.")
-            return
-        snapshot_dict = agent_snapshot_to_dict(agent.snapshot())
-        try:
-            config_module = importlib.reload(importlib.import_module("astra.config"))
-            importlib.reload(importlib.import_module("astra.tools"))
-            importlib.reload(importlib.import_module("astra.provider"))
-            importlib.reload(importlib.import_module("astra.runtime.builtin_capabilities"))
-            runtime_module = importlib.reload(importlib.import_module("astra.runtime.runtime"))
-            session_module = importlib.reload(importlib.import_module("astra.session"))
-            agent_module = importlib.reload(importlib.import_module("astra.agent"))
-        except Exception as exc:
-            print(f"Code reload failed: {exc}")
-            return
-
-        config_manager = config_module.ConfigManager()
-        runtime_after_code_reload = config_module.ResolvedRuntimeConfig(
-            model=agent.config.model,
-            base_url=agent.config.base_url,
-            system_prompt=agent.config.system_prompt,
-            tools=config_module.ToolRuntimeConfig(
-                enabled_tools=list(agent.runtime_config.tools.enabled_tools),
-                read_max_lines=agent.runtime_config.tools.read_max_lines,
-                bash_timeout_seconds=agent.runtime_config.tools.bash_timeout_seconds,
-                bash_max_output_bytes=agent.runtime_config.tools.bash_max_output_bytes,
-            ),
-            prompts=config_module.PromptRuntimeConfig(order=list(agent.runtime_config.prompts.order)),
-            capabilities=config_module.CapabilitiesConfig(
-                prompts=config_module.PromptCapabilityConfig(paths=list(agent.runtime_config.capabilities.prompts.paths)),
-                skills=config_module.SkillCapabilityConfig(
-                    paths=list(agent.runtime_config.capabilities.skills.paths),
-                ),
-            ),
-        )
-        restored_snapshot = session_module.agent_snapshot_from_dict(snapshot_dict, runtime_after_code_reload)
-        new_runtime = runtime_module.CapabilityRuntime(Path(restored_snapshot.runtime.cwd or cwd))
-        agent = agent_module.Agent(
-            agent_module.AgentConfig(
-                model=restored_snapshot.runtime.runtime_config.model,
-                api_key=api_key,
-                base_url=restored_snapshot.runtime.runtime_config.base_url,
-                cwd=Path(restored_snapshot.runtime.cwd or cwd),
-                system_prompt=restored_snapshot.runtime.runtime_config.system_prompt,
-            ),
-            capability_runtime=new_runtime,
-            initial_snapshot=restored_snapshot,
-        )
-        print("Code modules reloaded.")
-        reload_runtime_from_config()
-
-    def run_user_prompt(text: str):
-        _set_default_session_name(text)
-        result = run_streaming(lambda: agent.prompt(text, raw_input=text))
-        print()
-        if getattr(result, "error", None):
-            print(result.error, file=sys.stderr)
-        persist_agent_state(create_if_needed=True)
-        return result
-
     def register_commands() -> None:
         def help_command(_line: str) -> bool:
-            print_help()
+            print_help(app)
             return True
 
         def reload_command(line: str) -> bool:
@@ -599,77 +415,82 @@ def main(
             if command_name != "/reload":
                 return False
             if remainder == "code":
-                reload_code_modules()
+                result = app.reload_code()
+                print(result.message)
+                if not result.error:
+                    print_reload_summary(app, "Reloaded runtime configuration.", result.warnings)
+                else:
+                    print(result.error)
                 return True
             if remainder:
                 return False
-            reload_runtime_from_config()
+            result = app.reload_runtime()
+            if result.success:
+                print_reload_summary(app, result.message, result.warnings)
+            else:
+                print(f"Reload failed: {result.message}")
             return True
 
         def model_command(line: str) -> bool:
             _command_name, _, remainder = line.partition(" ")
             if not remainder:
-                print(agent.config.model)
+                print(app.get_model())
                 return True
-            agent.set_model(remainder.strip())
-            if session_state.materialized:
-                persist_agent_state()
-            print(f"Model set to {agent.config.model}")
+            result = app.set_model(remainder.strip())
+            print(result.message)
             return True
 
         def base_url_command(line: str) -> bool:
             _command_name, _, remainder = line.partition(" ")
             if not remainder:
-                print(agent.config.base_url)
+                print(app.get_base_url())
                 return True
-            agent.set_base_url(remainder.strip())
-            if session_state.materialized:
-                persist_agent_state()
-            print(f"Base URL set to {agent.config.base_url}")
+            result = app.set_base_url(remainder.strip())
+            print(result.message)
             return True
 
         def tools_command(_line: str) -> bool:
-            print_tools_summary(agent)
+            print_tools_summary(app)
             return True
 
         def skills_command(line: str) -> bool:
             _command_name, _, remainder = line.partition(" ")
             if remainder.strip():
                 return False
-            print_skills_list(agent)
+            print_skills_list(app)
             return True
 
         def templates_command(line: str) -> bool:
             _command_name, _, remainder = line.partition(" ")
             if remainder.strip():
                 return False
-            print_templates_list(agent)
+            print_templates_list(app)
             return True
 
         def runtime_command(line: str) -> bool:
             _command_name, _, remainder = line.partition(" ")
             normalized_remainder = remainder.strip()
             if normalized_remainder == "json":
-                print(json.dumps(build_runtime_summary(agent), ensure_ascii=False, indent=2))
+                print(json.dumps(build_runtime_summary(app), ensure_ascii=False, indent=2))
                 return True
             if normalized_remainder == "json prompt":
-                payload = build_runtime_summary(agent)
-                payload["prompt"] = build_runtime_prompt_summary(agent)
+                payload = build_runtime_summary(app)
+                payload["prompt"] = build_runtime_prompt_summary(app)
                 print(json.dumps(payload, ensure_ascii=False, indent=2))
                 return True
             if normalized_remainder == "warnings":
-                print_runtime_summary(agent, show_warnings_only=True)
+                print_runtime_summary(app, show_warnings_only=True)
                 return True
             if normalized_remainder == "prompt":
-                print_runtime_prompt(agent)
+                print_runtime_prompt(app)
                 return True
             if normalized_remainder:
                 return False
-            print_runtime_summary(agent)
+            print_runtime_summary(app)
             return True
 
         def sessions_command(_line: str) -> bool:
-            print_sessions(store, current_session_id=current_session_id())
+            print_sessions(app)
             return True
 
         def switch_command(line: str) -> bool:
@@ -677,14 +498,15 @@ def main(
             session_id = remainder.strip()
             if not session_id:
                 return False
-            loaded_session = store.load(session_id)
-            if not restore_session(loaded_session):
-                return True
-            print(f"Switched to {session_state.session.id}")
+            result = app.switch_session(session_id)
+            if result.error:
+                print(result.error)
+            else:
+                print(result.message)
             return True
 
         def resume_command(_line: str) -> bool:
-            sessions = print_resume_sessions(store, Path(agent.runtime_state.cwd))
+            sessions = print_resume_sessions(app)
             if not sessions:
                 return True
 
@@ -700,46 +522,33 @@ def main(
                 return True
 
             selected = sessions[session_index - 1]
-            loaded_session = store.load(selected.id)
-            if not restore_session(loaded_session):
+            result = app.resume_session(selected.id)
+            if result.error:
+                print(result.error)
                 return True
-            resumed_name = session_state.session.name or "(unnamed)"
-            print(f"Resumed {resumed_name} ({session_state.session.id})")
-            print_runtime_config_summary(agent)
+            print(result.message)
+            print_runtime_config_summary(app)
             return True
 
         def fork_command(line: str) -> bool:
-            if not session_state.materialized:
-                print("No saved session to fork.")
-                return True
-            persist_agent_state()
             _command_name, _, remainder = line.partition(" ")
             name = remainder.strip() or None
-            forked = store.fork(session_state.session.id, name=name)
-            session_state.session = forked
-            session_state.materialized = True
-            print(f"Forked to {forked.id}")
+            result = app.fork_session(name=name)
+            print(result.message)
             return True
 
         def rename_command(line: str) -> bool:
-            if not session_state.materialized:
-                print("No saved session to rename.")
-                return True
             _command_name, _, remainder = line.partition(" ")
             name = remainder.strip()
             if not name:
                 return False
-            session_state.session.name = name
-            persist_agent_state()
-            print(f"Renamed to {session_state.session.name}")
+            result = app.rename_session(name)
+            print(result.message)
             return True
 
         def save_command(_line: str) -> bool:
-            if not session_state.materialized:
-                print("No session to save.")
-                return True
-            persist_agent_state()
-            print(f"Saved {session_state.session.id}")
+            result = app.save_session()
+            print(result.message)
             return True
 
         def exit_command(_line: str) -> bool:
@@ -763,7 +572,12 @@ def main(
             CommandSpec(name="/templates", usage="/templates", summary="List available templates", handler=templates_command)
         )
         command_registry.register(
-            CommandSpec(name="/runtime", usage="/runtime | /runtime warnings | /runtime json | /runtime prompt | /runtime json prompt", summary="Show capability runtime state", handler=runtime_command)
+            CommandSpec(
+                name="/runtime",
+                usage="/runtime | /runtime warnings | /runtime json | /runtime prompt | /runtime json prompt",
+                summary="Show capability runtime state",
+                handler=runtime_command,
+            )
         )
         command_registry.register(
             CommandSpec(name="/sessions", usage="/sessions", summary="List saved sessions", handler=sessions_command)
@@ -787,13 +601,13 @@ def main(
     if args.prompt:
         text = " ".join(args.prompt).strip()
         if text:
-            result = run_user_prompt(text)
-            if getattr(result, "error", None):
+            result = run_user_prompt(app, run_streaming, text)
+            if result.error:
                 raise SystemExit(1)
         return
 
-    print(f"Session {current_session_id() or '(new)'}")
-    print_help()
+    print(f"Session {app.current_session_id() or '(new)'}")
+    print_help(app)
     while True:
         try:
             line = read_cli_line("astra> ").strip()
@@ -801,18 +615,13 @@ def main(
                 continue
             if line.startswith("/") and command_registry.dispatch(line):
                 continue
-            handled_extension, create_session = handle_extension_command(agent, line, run_streaming)
-            if handled_extension:
-                if create_session:
-                    persist_agent_state(create_if_needed=True)
-                elif session_state.materialized:
-                    persist_agent_state()
+            if handle_extension_command(app, line, run_streaming):
                 continue
-            run_user_prompt(line)
+            run_user_prompt(app, run_streaming, line)
         except EOFError:
             print()
-            if session_state.materialized:
-                persist_agent_state()
+            if app.has_materialized_session():
+                app.save_session()
             return
         except KeyboardInterrupt:
             print()

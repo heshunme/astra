@@ -48,18 +48,20 @@ writable_roots = [
 Without those settings, commands such as `uv run python -m compileall src`, `uv run python -m astra --help`, or `uv pip install -e .` can fail with network, cache-lock, or read-only cache directory errors even when Astra itself is fine.
 
 ## Architecture
-The project is in a transition state, but the code now follows a three-layer shape:
+The project is in a transition state, but the code now follows a four-layer shape:
 
 - `core engine`
   - Owns conversation state, provider/tool orchestration, event emission, abort, and generic snapshot/restore mechanics
 - `coding-agent`
-  - Owns runtime reload application, prompt assembly, skill/template behavior, runtime inspection, and other coding-agent-specific policy
+  - Owns runtime reload application, prompt assembly, typed skill/template behavior, runtime inspection, and other coding-agent-specific policy
+- `application service`
+  - The exported `AstraApp` type owns config loading, session persistence, startup/restore orchestration, runtime/session commands, and `/reload code`
 - CLI
-  - Owns config loading, session persistence, terminal I/O, and slash-command parsing for interactive commands such as `/model`, `/base-url`, `/skills`, `/templates`, `/reload`, `/sessions`, `/skill:<name>`, and `/template:<name> <request>`
+  - Owns terminal I/O, signal handling, and slash-command parsing that translates interactive commands such as `/model`, `/base-url`, `/skills`, `/templates`, `/reload`, `/sessions`, `/skill:<name>`, and `/template:<name> <request>` into `AstraApp` typed calls
 
 Longer-term architecture direction, including core-engine goals and self-evolution layering, is documented in `docs/evolution_strategy.md`.
 
-The current non-CLI reusable entrypoint is still the exported `Agent` type, which now acts as the coding-agent service facade over the internal core engine.
+The current reusable non-CLI entrypoint is the exported `AstraApp` type. `Agent` remains the lower-level coding-agent facade over the internal core engine.
 
 For a current architecture survey in Chinese, see `docs/architecture.zh-CN.md`.
 

@@ -11,10 +11,8 @@ from pathlib import Path
 import pytest
 
 from astra import cli
-from astra.agent import Agent, AgentConfig
-from astra.models import CoreCommandResult, ProviderEvent
+from astra.models import ProviderEvent
 from astra.provider import OpenAICompatibleProvider
-from astra.runtime import CapabilityRuntime
 from astra.session import SessionStore
 
 
@@ -714,38 +712,6 @@ def test_inline_template_command_rewrites_prompt_and_persists_metadata(
     assert "Please follow the template instructions below for this turn only." in data["messages"][0]["content"]
 
 
-def test_cli_extension_commands_do_not_use_agent_string_dispatch(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    cwd = tmp_path / "workspace"
-    cwd.mkdir()
-    _write_template(cwd, "repo-rules")
-
-    def fake_stream_chat(self, _request):
-        yield ProviderEvent(type="text_delta", delta="ok")
-        yield ProviderEvent(type="done")
-
-    class NoStringDispatchAgent(Agent):
-        def try_handle_extension_command(self, raw_input: str, *, on_event=None):
-            raise AssertionError(f"CLI should not use try_handle_extension_command: {raw_input}")
-
-    def agent_factory(config: AgentConfig, runtime: CapabilityRuntime) -> Agent:
-        return NoStringDispatchAgent(config, runtime)
-
-    monkeypatch.setattr(OpenAICompatibleProvider, "stream_chat", fake_stream_chat)
-    monkeypatch.setattr(
-        builtins,
-        "input",
-        InputFeeder(["/template:repo-rules Review src/demo.py for issues.", "/templates", "/exit"]),
-    )
-    cli.main(["--cwd", str(cwd)], agent_factory=agent_factory)
-
-    out = capsys.readouterr().out
-    assert "ok" in out
-    assert "- repo-rules" in out
-    assert "(active)" not in out
-
-
 def test_template_command_does_not_consume_pending_skill(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -775,35 +741,6 @@ def test_template_command_does_not_consume_pending_skill(
     assert len(requests) == 1
     assert "Please use the skill 'review' for this turn only." not in str(requests[0].messages[1]["content"])
     assert "Please follow the template instructions below for this turn only." in str(requests[0].messages[1]["content"])
-
-
-def test_cli_falls_back_to_custom_agent_extension_commands(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    cwd = tmp_path / "workspace"
-    cwd.mkdir()
-
-    class CustomExtensionAgent(Agent):
-        def extension_command_usages(self) -> list[str]:
-            return super().extension_command_usages() + ["/foo"]
-
-        def try_handle_extension_command(self, raw_input: str, *, on_event=None):
-            if raw_input == "/foo":
-                return CoreCommandResult(message="custom foo handled", persist_state=False)
-            return super().try_handle_extension_command(raw_input, on_event=on_event)
-
-        def prompt(self, text: str, *, metadata=None, raw_input=None, on_event=None):
-            raise AssertionError(f"custom extension should not fall through to prompt: {text}")
-
-    def agent_factory(config: AgentConfig, runtime: CapabilityRuntime) -> Agent:
-        return CustomExtensionAgent(config, runtime)
-
-    monkeypatch.setattr(builtins, "input", InputFeeder(["/help", "/foo", "/exit"]))
-    cli.main(["--cwd", str(cwd)], agent_factory=agent_factory)
-
-    out = capsys.readouterr().out
-    assert "/foo" in out
-    assert "custom foo handled" in out
 
 
 def test_bare_skill_command_arms_next_prompt_once(

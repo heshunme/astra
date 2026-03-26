@@ -75,8 +75,9 @@ These instructions apply to the entire repository tree.
 - Prefer command registries and focused handlers over growing `if/elif` command trees.
 - Keep runtime state layers explicit: persisted config, process runtime config, session-scoped temporary state.
 - Keep the ownership boundary explicit:
-  - `src/astra/agent.py` owns the state machine, event stream, runtime apply/inspect, tool loop, and extension command semantics in the current codebase.
-  - `src/astra/cli.py` owns config loading, session store interaction, terminal rendering, and built-in slash commands.
+  - `src/astra/agent.py` owns the state machine, event stream, runtime apply/inspect, tool loop, and typed skill/template behavior.
+  - `src/astra/app.py` owns config loading, session store interaction, startup/restore orchestration, session persistence, built-in command application methods, and `/reload code`.
+  - `src/astra/cli.py` owns terminal rendering, argv/input handling, and translation from slash-command text to `AstraApp` typed calls.
 
 ## Validation expectations
 - For code changes, run at least targeted validation relevant to the change.
@@ -87,10 +88,11 @@ These instructions apply to the entire repository tree.
 
 ## SOP
 - Capability/runtime change order:
-  - Read `src/astra/config.py`, `src/astra/runtime/runtime.py`, `src/astra/agent.py`, and `src/astra/cli.py` in full.
+  - Read `src/astra/config.py`, `src/astra/runtime/runtime.py`, `src/astra/agent.py`, `src/astra/app.py`, and `src/astra/cli.py` in full.
   - Change config shape first.
   - Implement runtime/registry behavior second.
   - Wire agent behavior third.
+  - Wire application-service orchestration fourth.
   - Wire CLI command handling last.
 - Recommended validation sequence:
   - `uv run python -m compileall src`

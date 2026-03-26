@@ -1,4 +1,6 @@
 from .agent import Agent
+from .app import AstraApp, AstraAppOptions
+from .cli_commands import CommandRegistry, CommandSpec, PrefixCommandSpec
 from .config import (
     CapabilitiesConfig,
     ConfigError,
@@ -9,14 +11,16 @@ from .config import (
     RuntimeConfig,
     ToolRuntimeConfig,
 )
-from .models import AgentEvent, AgentSnapshot, CoreCommandResult
+from .models import AgentEvent, AgentSnapshot
 from .provider import OpenAICompatibleProvider
-from .runtime import CapabilityRuntime, CommandRegistry, CommandSpec, PrefixCommandSpec
+from .runtime import CapabilityRuntime
 from .session import SessionStore
 from .tools import build_default_tools
 
 __all__ = [
     "Agent",
+    "AstraApp",
+    "AstraAppOptions",
     "AgentEvent",
     "AgentSnapshot",
     "CapabilitiesConfig",
@@ -25,7 +29,6 @@ __all__ = [
     "CommandSpec",
     "ConfigError",
     "ConfigManager",
-    "CoreCommandResult",
     "OpenAICompatibleProvider",
     "PrefixCommandSpec",
     "PromptRuntimeConfig",

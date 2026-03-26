@@ -155,14 +155,6 @@ class AgentRunResult:
     error: str | None = None
 
 
-@dataclass(slots=True)
-class CoreCommandResult:
-    message: str | None = None
-    run_result: AgentRunResult | None = None
-    error: str | None = None
-    persist_state: bool = False
-
-
 def clone_tool_call(tool_call: ToolCall) -> ToolCall:
     return ToolCall(id=tool_call.id, name=tool_call.name, arguments=tool_call.arguments)
 
