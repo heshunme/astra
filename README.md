@@ -77,9 +77,9 @@ For a new conversation, the first normal user prompt becomes the default saved s
 Saved sessions persist both message history and the agent snapshot needed to restore runtime-only state for that session, including:
 
 - pending one-shot skill trigger
-- per-session runtime values such as `model`, `base_url`, and `system_prompt`
+- the full resolved runtime config for that session, including `model`, `base_url`, `system_prompt`, tool enablement and defaults, prompt order, and capability paths
 
-When you restore a session via `--session`, `/switch`, or `/resume`, Astra restores those snapshot values before continuing.
+When you restore a session via `--session`, `/switch`, or `/resume`, Astra reapplies that saved runtime snapshot before continuing. Use `/reload` when you explicitly want to switch back to the current env and YAML-derived runtime.
 
 ## Reloadable config
 

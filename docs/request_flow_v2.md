@@ -212,7 +212,7 @@ sequenceDiagram
 
 1. 流式响应期间，`/reload` 与 `/reload code` 都会被拒绝。
 2. `/reload`：重新读取 env/config 并 `apply_runtime_config()`，打印 reload 摘要与 warnings。
-3. `/reload code`：best-effort 热重载 Python 模块，恢复快照后再走一次 `/reload` 逻辑。
+3. `/reload code`：best-effort 热重载 Python 模块，先恢复会话快照，再走一次 `/reload` 逻辑。
 
 ## 10. 工具执行与安全边界
 

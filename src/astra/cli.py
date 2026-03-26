@@ -465,13 +465,10 @@ def main(
         session_state.materialized = True
         return True
 
-    def restore_session(session: Session, active_runtime: ResolvedRuntimeConfig) -> bool:
-        snapshot = session_to_agent_snapshot(session, active_runtime)
+    def restore_session(session: Session) -> bool:
+        snapshot = session_to_agent_snapshot(session, agent.runtime_config)
         agent.restore(snapshot)
-        resumed_runtime = clone_resolved_runtime_config(active_runtime)
-        resumed_runtime.model = snapshot.runtime.runtime_config.model
-        resumed_runtime.base_url = snapshot.runtime.runtime_config.base_url
-        resumed_runtime.system_prompt = snapshot.runtime.runtime_config.system_prompt
+        resumed_runtime = clone_resolved_runtime_config(snapshot.runtime.runtime_config)
         result = agent.apply_runtime_config(resumed_runtime)
         if not result.success:
             print(f"Failed to restore session: {result.message}")
@@ -489,7 +486,7 @@ def main(
 
     if args.session and not args.new_session:
         loaded_session = store.load(args.session)
-        if not restore_session(loaded_session, runtime_config):
+        if not restore_session(loaded_session):
             raise SystemExit(1)
 
     command_registry = CommandRegistry()
@@ -674,8 +671,7 @@ def main(
             if not session_id:
                 return False
             loaded_session = store.load(session_id)
-            active_runtime = clone_resolved_runtime_config(agent.runtime_config)
-            if not restore_session(loaded_session, active_runtime):
+            if not restore_session(loaded_session):
                 return True
             print(f"Switched to {session_state.session.id}")
             return True
@@ -698,8 +694,7 @@ def main(
 
             selected = sessions[session_index - 1]
             loaded_session = store.load(selected.id)
-            active_runtime = clone_resolved_runtime_config(agent.runtime_config)
-            if not restore_session(loaded_session, active_runtime):
+            if not restore_session(loaded_session):
                 return True
             resumed_name = session_state.session.name or "(unnamed)"
             print(f"Resumed {resumed_name} ({session_state.session.id})")

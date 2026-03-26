@@ -69,6 +69,12 @@ def _write_template(cwd: Path, name: str, body: str = "Template body") -> None:
     (prompt_dir / f"{name}.md").write_text(body, encoding="utf-8")
 
 
+def _write_project_config(cwd: Path, body: str) -> None:
+    config_dir = cwd / ".astra"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "config.yaml").write_text(body.strip() + "\n", encoding="utf-8")
+
+
 def test_runtime_json_prompt_command(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     cwd = tmp_path / "workspace"
     cwd.mkdir()
@@ -303,6 +309,82 @@ def test_restored_session_preserves_session_base_url(
 
     out = capsys.readouterr().out
     assert "http://custom-gateway/v1" in out
+
+
+def test_restored_session_reapplies_full_runtime_snapshot(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+    extra_one = tmp_path / "extra-one"
+    extra_two = tmp_path / "extra-two"
+    _write_skill_dir(extra_one / "review", name="review", summary="Extra one review")
+    _write_skill_dir(extra_two / "review", name="review", summary="Extra two review")
+    _write_project_config(
+        cwd,
+        f"""
+tools:
+  enabled: [read, ls]
+  defaults:
+    read:
+      max_lines: 123
+prompts:
+  order:
+    - builtin:base
+capabilities:
+  skills:
+    paths:
+      - {extra_one}
+""",
+    )
+
+    def fake_stream_chat(self, _request):
+        yield ProviderEvent(type="text_delta", delta="ok")
+        yield ProviderEvent(type="done")
+
+    monkeypatch.setattr(OpenAICompatibleProvider, "stream_chat", fake_stream_chat)
+    monkeypatch.setattr(builtins, "input", InputFeeder(["hello", "/exit"]))
+    cli.main(["--cwd", str(cwd)])
+
+    _write_project_config(
+        cwd,
+        f"""
+tools:
+  enabled: [read, write, edit, ls, find, grep, bash]
+  defaults:
+    read:
+      max_lines: 999
+prompts:
+  order:
+    - builtin:base
+    - config:system
+capabilities:
+  skills:
+    paths:
+      - {extra_two}
+""",
+    )
+
+    saved_session = json.loads(_saved_session_files(tmp_path)[0].read_text(encoding="utf-8"))
+    monkeypatch.setattr(
+        builtins,
+        "input",
+        InputFeeder(["/runtime", "/tools", "/skills", "/reload", "/runtime", "/tools", "/skills", "/exit"]),
+    )
+    cli.main(["--cwd", str(cwd), "--session", saved_session["id"]])
+
+    out = capsys.readouterr().out
+    before_reload, after_reload = out.split("Reloaded runtime configuration.", 1)
+    assert "tools=read, ls" in before_reload
+    assert "Tools summary" in before_reload
+    assert "read.max_lines=123" in before_reload
+    assert "prompts.order=builtin:base" in before_reload
+    assert "- review: Extra one review" in before_reload
+    assert "tools=read, write, edit, ls, find, grep, bash" in after_reload
+    assert "Tools summary" in after_reload
+    assert "read.max_lines=999" in after_reload
+    assert "prompts.order=builtin:base, config:system" in after_reload
+    assert "- review: Extra two review" in after_reload
 
 
 def test_switch_command(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

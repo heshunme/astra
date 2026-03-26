@@ -451,9 +451,9 @@ CLI 启动时会先创建一个 `Session` 对象，但默认 `materialized=False
 
 1. 把 session 转回 `AgentSnapshot`
 2. 调 `agent.restore(snapshot)`
-3. 再根据快照中的 runtime config 调 `agent.apply_runtime_config(...)`
+3. 再把快照里的完整 resolved runtime config 重新 `agent.apply_runtime_config(...)`
 
-这个“两段式恢复”设计让会话既能恢复内存状态，也能重新对齐当前 runtime snapshot。
+这个“两段式恢复”设计让会话既能恢复内存状态，也能重新构建出保存当时的 runtime 能力环境；如果需要重新对齐当前 env/config，则显式执行 `/reload`。
 
 ### 9.3 SessionStore 的职责
 

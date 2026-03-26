@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from astra.config import ResolvedRuntimeConfig
+from astra.config import CapabilitiesConfig, PromptCapabilityConfig, PromptRuntimeConfig, ResolvedRuntimeConfig, SkillCapabilityConfig, ToolRuntimeConfig
 from astra.models import (
     AgentConversationState,
     AgentRuntimeState,
@@ -113,6 +113,48 @@ def test_session_load_preserves_agent_snapshot(tmp_path: Path) -> None:
     assert loaded.agent_snapshot.runtime.runtime_config.base_url == "http://gateway/v1"
     assert loaded.agent_snapshot.runtime.pending_skill_trigger is not None
     assert loaded.agent_snapshot.runtime.pending_skill_trigger.name == "review"
+
+
+def test_session_load_preserves_full_runtime_config_in_agent_snapshot(tmp_path: Path) -> None:
+    store = SessionStore(base_dir=tmp_path)
+    session = store.create(cwd="/repo", model="gpt-test", system_prompt="sys", name="demo")
+    session.agent_snapshot = AgentSnapshot(
+        conversation=AgentConversationState(messages=[]),
+        runtime=AgentRuntimeState(
+            cwd="/repo",
+            runtime_config=ResolvedRuntimeConfig(
+                model="gpt-test",
+                base_url="http://gateway/v1",
+                system_prompt="sys",
+                tools=ToolRuntimeConfig(
+                    enabled_tools=["read", "ls"],
+                    read_max_lines=123,
+                    bash_timeout_seconds=45,
+                    bash_max_output_bytes=2048,
+                ),
+                prompts=PromptRuntimeConfig(order=["builtin:base"]),
+                capabilities=CapabilitiesConfig(
+                    prompts=PromptCapabilityConfig(paths=["/repo/prompts"]),
+                    skills=SkillCapabilityConfig(paths=["/repo/skills"]),
+                ),
+            ),
+            skill_catalog_snapshot=[],
+            pending_skill_trigger=None,
+        ),
+    )
+
+    store.save(session)
+    loaded = store.load(session.id)
+
+    assert loaded.agent_snapshot is not None
+    runtime_config = loaded.agent_snapshot.runtime.runtime_config
+    assert runtime_config.tools.enabled_tools == ["read", "ls"]
+    assert runtime_config.tools.read_max_lines == 123
+    assert runtime_config.tools.bash_timeout_seconds == 45
+    assert runtime_config.tools.bash_max_output_bytes == 2048
+    assert runtime_config.prompts.order == ["builtin:base"]
+    assert runtime_config.capabilities.prompts.paths == ["/repo/prompts"]
+    assert runtime_config.capabilities.skills.paths == ["/repo/skills"]
 
 
 def test_session_load_ignores_legacy_template_runtime_state(tmp_path: Path) -> None:
