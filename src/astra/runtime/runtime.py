@@ -370,10 +370,18 @@ class CapabilityRuntime:
             return
 
         loaded_files: list[str] = []
+        resolved_skill_dir = skill_dir.resolve()
         for relative_path in ordered_files:
-            resource_file = (skill_dir / relative_path).resolve()
+            resource_file = self._resolve_skill_resource(resolved_skill_dir, relative_path)
+            if resource_file is None:
+                diagnostics.warnings.append(
+                    f"Skill resource escapes skill directory: {skill_file} ({self._format_skill_resource_reference(relative_path)})"
+                )
+                return
             if not resource_file.exists() or not resource_file.is_file():
-                diagnostics.warnings.append(f"Skill resource not found: {resource_file}")
+                diagnostics.warnings.append(
+                    f"Skill resource not found: {skill_file} ({self._format_skill_resource_reference(relative_path)})"
+                )
                 return
             loaded_files.append(str(resource_file))
 
@@ -401,3 +409,16 @@ class CapabilityRuntime:
             diagnostics.warnings.append(f"Skill field must be a list of strings: {skill_file} ({label})")
             return None
         return [item for item in value]
+
+    def _resolve_skill_resource(self, skill_dir: Path, relative_path: str) -> Path | None:
+        resource_file = (skill_dir / relative_path).resolve()
+        try:
+            resource_file.relative_to(skill_dir)
+        except ValueError:
+            return None
+        return resource_file
+
+    def _format_skill_resource_reference(self, resource_path: str) -> str:
+        if Path(resource_path).is_absolute():
+            return "<absolute path>"
+        return resource_path

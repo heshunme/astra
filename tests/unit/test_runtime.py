@@ -89,6 +89,81 @@ prompt_files:
     assert snapshot.skills["debug"].when_to_use == "Use for reproducing and isolating bugs."
 
 
+def test_runtime_rejects_skill_resource_that_escapes_skill_directory(tmp_path: Path, runtime_config_factory) -> None:
+    cwd = tmp_path / "workspace"
+    skill_dir = cwd / ".astra" / "skills" / "review"
+    skill_dir.mkdir(parents=True)
+    escaped_file = cwd / ".astra" / "skills" / "outside.md"
+    escaped_file.write_text("outside", encoding="utf-8")
+    (skill_dir / "skill.yaml").write_text(
+        """
+name: review
+summary: review checklist
+prompt_files:
+  - ../outside.md
+""".strip(),
+        encoding="utf-8",
+    )
+
+    runtime = CapabilityRuntime(cwd)
+    snapshot = runtime.reload(runtime_config_factory())
+
+    assert not runtime.has_skill("review")
+    assert "review" not in snapshot.skills
+    assert any("Skill resource escapes skill directory" in warning for warning in snapshot.diagnostics.warnings)
+    assert all(str(escaped_file.resolve()) not in warning for warning in snapshot.diagnostics.warnings)
+
+
+def test_runtime_rejects_skill_resource_absolute_path_outside_skill_directory(tmp_path: Path, runtime_config_factory) -> None:
+    cwd = tmp_path / "workspace"
+    skill_dir = cwd / ".astra" / "skills" / "review"
+    skill_dir.mkdir(parents=True)
+    escaped_file = tmp_path / "outside.md"
+    escaped_file.write_text("outside", encoding="utf-8")
+    (skill_dir / "skill.yaml").write_text(
+        f"""
+name: review
+summary: review checklist
+prompt_files:
+  - {escaped_file}
+""".strip(),
+        encoding="utf-8",
+    )
+
+    runtime = CapabilityRuntime(cwd)
+    snapshot = runtime.reload(runtime_config_factory())
+
+    assert not runtime.has_skill("review")
+    assert "review" not in snapshot.skills
+    assert any("Skill resource escapes skill directory" in warning for warning in snapshot.diagnostics.warnings)
+    assert all(str(escaped_file.resolve()) not in warning for warning in snapshot.diagnostics.warnings)
+
+
+def test_runtime_allows_normalized_skill_resource_that_stays_within_skill_directory(
+    tmp_path: Path, runtime_config_factory
+) -> None:
+    cwd = tmp_path / "workspace"
+    skill_dir = cwd / ".astra" / "skills" / "review"
+    nested_dir = skill_dir / "nested"
+    nested_dir.mkdir(parents=True)
+    (skill_dir / "checklist.md").write_text("skill prompt body", encoding="utf-8")
+    (skill_dir / "skill.yaml").write_text(
+        """
+name: review
+summary: review checklist
+prompt_files:
+  - nested/../checklist.md
+""".strip(),
+        encoding="utf-8",
+    )
+
+    runtime = CapabilityRuntime(cwd)
+    snapshot = runtime.reload(runtime_config_factory())
+
+    assert runtime.has_skill("review")
+    assert snapshot.skills["review"].files == [str((skill_dir / "checklist.md").resolve())]
+
+
 def test_runtime_warns_when_skills_exist_but_read_tool_is_disabled(tmp_path: Path, runtime_config_factory) -> None:
     cwd = tmp_path / "workspace"
     skill_dir = cwd / ".astra" / "skills" / "review"
