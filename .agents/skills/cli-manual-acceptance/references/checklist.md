@@ -10,7 +10,7 @@ Use the following setup unless the user explicitly asks for a different path:
 env OPENAI_API_KEY=test-key .venv/bin/python -m compileall src
 env OPENAI_API_KEY=test-key .venv/bin/python -m astra --help
 .venv/bin/python scripts/manual_cli.py --no-launch
-env HOME=<temp_root>/home OPENAI_API_KEY=test-key .venv/bin/python -m astra --cwd <workspace>
+env HOME=<temp_root>/home .venv/bin/python -m astra --cwd <workspace>
 ```
 
 Notes:
@@ -19,6 +19,7 @@ Notes:
 - Prefer `.venv/bin/python` for the interactive session. Bare system `python` may fail with missing editable-install dependencies such as `yaml`.
 - Prefer `.venv/bin/python` for the non-interactive prechecks as well so the whole manual acceptance flow uses a single interpreter baseline.
 - Capture the `temp_root` and `workspace` paths printed by `.venv/bin/python scripts/manual_cli.py --no-launch`; they are needed for the interactive launch.
+- Do not export `OPENAI_API_KEY` in the shell, otherwise the environment will override `.env` and the live-provider step may fail with 401.
 - Feed slash commands in small batches so the first mismatch is attributable.
 
 ## Command Order

@@ -18,8 +18,8 @@ Prefer the most stable execution path that worked in practice:
   `env OPENAI_API_KEY=test-key .venv/bin/python -m astra --help`
 - Use the repository virtualenv interpreter to create the disposable workspace first so you can capture the exact `temp_root`, `workspace`, and `home` paths:
   `.venv/bin/python scripts/manual_cli.py --no-launch`
-- Launch the interactive CLI with the repository virtualenv interpreter, not bare system Python:
-  `env HOME=<temp_root>/home OPENAI_API_KEY=test-key .venv/bin/python -m astra --cwd <workspace>`.
+- Launch the interactive CLI with the repository virtualenv interpreter, not bare system Python. Do not set `OPENAI_API_KEY` here so the app reads the real key from `<workspace>/.env`:
+  `env HOME=<temp_root>/home .venv/bin/python -m astra --cwd <workspace>`.
 - Avoid `python -m astra` from `/usr/bin/python` for the manual session; it can miss editable-install dependencies such as `yaml`.
 - Assume commands are run from the repository root so `.venv/bin/python` resolves correctly.
 
@@ -28,7 +28,7 @@ Prefer the most stable execution path that worked in practice:
 1. Confirm the validation scope.
    Decide whether the user wants the full manual flow or only the subset relevant to CLI, runtime, prompt assembly, session restore, or reload behavior.
 2. Prepare the execution path.
-   Run the lightweight prechecks with `.venv/bin/python`, create the temporary workspace with `.venv/bin/python scripts/manual_cli.py --no-launch`, and launch the interactive CLI from `.venv/bin/python` with `HOME` pointed at the generated temp home.
+   Run the lightweight prechecks with `.venv/bin/python`, create the temporary workspace with `.venv/bin/python scripts/manual_cli.py --no-launch`, and launch the interactive CLI from `.venv/bin/python` with `HOME` pointed at the generated temp home. Do not export `OPENAI_API_KEY` in the shell (env vars override `.env`).
 3. Read the checklist.
    Use the ordered commands and expected observations from `references/checklist.md`. Do not improvise a new order unless the change scope clearly justifies skipping unrelated steps.
 4. Run the flow from low risk to high impact.
