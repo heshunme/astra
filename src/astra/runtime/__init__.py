@@ -6,6 +6,7 @@ from .runtime import (
     PromptFragment,
     RuntimeDiagnostics,
     RuntimeSnapshot,
+    SkillConflictInfo,
     SkillSpec,
 )
 
@@ -17,5 +18,6 @@ __all__ = [
     "PromptFragment",
     "RuntimeDiagnostics",
     "RuntimeSnapshot",
+    "SkillConflictInfo",
     "SkillSpec",
 ]

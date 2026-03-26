@@ -138,6 +138,7 @@ def print_sessions(store: SessionStore, current_session_id: str | None = None) -
 
 def print_reload_summary(agent: Agent, message: str, warnings: list[str] | None = None) -> None:
     summary = agent.inspect_runtime()
+    conflicts = summary["skills"]["conflicts"]
     print(message)
     print(f"model={summary['model']}")
     print(f"base_url={summary['base_url']}")
@@ -145,6 +146,7 @@ def print_reload_summary(agent: Agent, message: str, warnings: list[str] | None 
     print(f"skills.available={', '.join(summary['skills']['available']) or '(none)'}")
     print(f"skills.history_only={', '.join(summary['skills']['history_only']) or '(none)'}")
     print(f"skills.pending={summary['skills']['pending'] or '(none)'}")
+    print(f"skills.conflicts={len(conflicts)}")
     print(f"templates.available={', '.join(summary['templates']['available']) or '(none)'}")
     print(f"prompts.loaded={len(summary['prompts']['loaded'])}")
     print(f"skills.loaded={len(summary['skills']['loaded'])}")
@@ -179,6 +181,10 @@ def print_skills_list(agent: Agent) -> None:
         print(f"- {entry.name}: {entry.summary}")
         if entry.when_to_use:
             print(f"  Use when: {entry.when_to_use}")
+        if entry.source_label:
+            print(f"  Source: {entry.source_label}")
+        if entry.shadowed_sources:
+            print(f"  Shadowed definitions: {len(entry.shadowed_sources)}")
 
 
 def print_templates_list(agent: Agent) -> None:
@@ -260,6 +266,7 @@ def print_runtime_summary(agent: Agent, show_warnings_only: bool = False) -> Non
     print(f"skills.available={', '.join(skill_summary['available']) or '(none)'}")
     print(f"skills.history_only={', '.join(skill_summary['history_only']) or '(none)'}")
     print(f"skills.pending={skill_summary['pending'] or '(none)'}")
+    print(f"skills.conflicts={len(skill_summary['conflicts'])}")
     print(f"templates.available={', '.join(template_summary['available']) or '(none)'}")
     print(f"prompts.loaded={', '.join(prompt_summary['loaded']) or '(none)'}")
     print(f"skills.loaded={', '.join(skill_summary['loaded']) or '(none)'}")

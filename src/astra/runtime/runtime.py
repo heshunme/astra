@@ -41,7 +41,20 @@ class SkillSpec:
     summary: str
     when_to_use: str
     source: str
+    source_label: str
+    root_kind: str
+    root_order: int
+    shadowed_sources: list[str] = field(default_factory=list)
     files: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class SkillConflictInfo:
+    name: str
+    winner_source: str
+    winner_source_label: str
+    shadowed_sources: list[str] = field(default_factory=list)
+    shadowed_source_labels: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -49,6 +62,7 @@ class RuntimeDiagnostics:
     warnings: list[str] = field(default_factory=list)
     loaded_prompts: list[str] = field(default_factory=list)
     loaded_skills: list[str] = field(default_factory=list)
+    skill_conflicts: list[SkillConflictInfo] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -106,16 +120,66 @@ class PromptRegistry:
 
 class SkillRegistry:
     def __init__(self):
-        self._skills: dict[str, SkillSpec] = {}
+        self._skills: dict[str, list[SkillSpec]] = {}
 
     def register(self, skill: SkillSpec) -> None:
-        self._skills[skill.name] = skill
+        self._skills.setdefault(skill.name, []).append(skill)
 
     def get(self, name: str) -> SkillSpec | None:
-        return self._skills.get(name)
+        skills = self._skills.get(name)
+        if not skills:
+            return None
+        return self._select_winner(skills)
 
     def items(self) -> dict[str, SkillSpec]:
-        return dict(self._skills)
+        result: dict[str, SkillSpec] = {}
+        for name, skills in self._skills.items():
+            if not skills:
+                continue
+            result[name] = self._select_winner(skills)
+        return result
+
+    def finalize(self, diagnostics: RuntimeDiagnostics) -> dict[str, SkillSpec]:
+        result: dict[str, SkillSpec] = {}
+        diagnostics.loaded_skills = []
+        diagnostics.skill_conflicts = []
+
+        for name in sorted(self._skills):
+            skills = self._skills[name]
+            if not skills:
+                continue
+            winner = self._select_winner(skills)
+            shadowed = [skill for skill in skills if skill.source != winner.source]
+            winner.shadowed_sources = [skill.source for skill in shadowed]
+            result[name] = winner
+            diagnostics.loaded_skills.append(name)
+            if not shadowed:
+                continue
+            diagnostics.skill_conflicts.append(
+                SkillConflictInfo(
+                    name=name,
+                    winner_source=winner.source,
+                    winner_source_label=winner.source_label,
+                    shadowed_sources=[skill.source for skill in shadowed],
+                    shadowed_source_labels=[skill.source_label for skill in shadowed],
+                )
+            )
+            shadowed_labels = ", ".join(skill.source_label for skill in shadowed)
+            diagnostics.warnings.append(
+                f"Skill conflict for {name}: using {winner.source_label}; shadowed {shadowed_labels}."
+            )
+
+        return result
+
+    def _select_winner(self, skills: list[SkillSpec]) -> SkillSpec:
+        return max(skills, key=lambda skill: (self._root_priority(skill.root_kind), skill.root_order, skill.source))
+
+    def _root_priority(self, root_kind: str) -> int:
+        if root_kind == "project":
+            return 2
+        if root_kind == "extra":
+            return 1
+        return 0
 
 
 class CommandRegistry:
@@ -177,7 +241,9 @@ class CapabilityRuntime:
         for skill_dir in self._iter_skill_dirs(runtime_config):
             self._register_skill(skill_registry, diagnostics, skill_dir)
 
-        if skill_registry.items() and "read" not in enabled_tools:
+        resolved_skills = skill_registry.finalize(diagnostics)
+
+        if resolved_skills and "read" not in enabled_tools:
             diagnostics.warnings.append("Skills are available but the read tool is disabled; skill details cannot be loaded on demand.")
 
         for ref in self._default_prompt_refs(runtime_config):
@@ -188,7 +254,7 @@ class CapabilityRuntime:
         self._snapshot = RuntimeSnapshot(
             tools=enabled_tools,
             prompt_fragments=prompt_registry.items(),
-            skills=skill_registry.items(),
+            skills=resolved_skills,
             diagnostics=diagnostics,
         )
         return self._snapshot
@@ -277,20 +343,20 @@ class CapabilityRuntime:
                 prompt_files.append(resolved_file)
         return prompt_files
 
-    def _iter_skill_dirs(self, runtime_config: ResolvedRuntimeConfig) -> list[Path]:
-        skill_dirs: list[Path] = []
+    def _iter_skill_dirs(self, runtime_config: ResolvedRuntimeConfig) -> list[SkillRootDir]:
+        skill_dirs: list[SkillRootDir] = []
         seen: set[Path] = set()
-        for root_dir in self._skill_roots(runtime_config):
-            if not root_dir.exists() or not root_dir.is_dir():
+        for root in self._skill_roots(runtime_config):
+            if not root.path.exists() or not root.path.is_dir():
                 continue
-            for child in sorted(root_dir.iterdir()):
+            for child in sorted(root.path.iterdir()):
                 if not child.is_dir():
                     continue
                 resolved_dir = child.resolve()
                 if resolved_dir in seen:
                     continue
                 seen.add(resolved_dir)
-                skill_dirs.append(resolved_dir)
+                skill_dirs.append(SkillRootDir(path=resolved_dir, source=root))
         return skill_dirs
 
     def _prompt_dirs(self, runtime_config: ResolvedRuntimeConfig) -> list[Path]:
@@ -298,9 +364,32 @@ class CapabilityRuntime:
         prompt_dirs.extend(self._resolve_extra_paths(runtime_config.capabilities.prompts.paths))
         return prompt_dirs
 
-    def _skill_roots(self, runtime_config: ResolvedRuntimeConfig) -> list[Path]:
-        skill_dirs = [Path.home() / ".astra-python" / "skills", self.cwd / ".astra" / "skills"]
-        skill_dirs.extend(self._resolve_extra_paths(runtime_config.capabilities.skills.paths))
+    def _skill_roots(self, runtime_config: ResolvedRuntimeConfig) -> list[SkillRootSource]:
+        skill_dirs = [
+            SkillRootSource(
+                path=(Path.home() / ".astra-python" / "skills").resolve(),
+                kind="global",
+                order=0,
+                label="global (~/.astra-python/skills)",
+            )
+        ]
+        skill_dirs.extend(
+            SkillRootSource(
+                path=path,
+                kind="extra",
+                order=index,
+                label=f"extra[{index + 1}] ({path})",
+            )
+            for index, path in enumerate(self._resolve_extra_paths(runtime_config.capabilities.skills.paths))
+        )
+        skill_dirs.append(
+            SkillRootSource(
+                path=(self.cwd / ".astra" / "skills").resolve(),
+                kind="project",
+                order=0,
+                label="project (.astra/skills)",
+            )
+        )
         return skill_dirs
 
     def _resolve_extra_paths(self, raw_paths: list[str]) -> list[Path]:
@@ -331,9 +420,10 @@ class CapabilityRuntime:
         self,
         skill_registry: SkillRegistry,
         diagnostics: RuntimeDiagnostics,
-        skill_dir: Path,
+        skill_dir: SkillRootDir,
     ) -> None:
-        skill_file = skill_dir / "skill.yaml"
+        resolved_skill_dir = skill_dir.path.resolve()
+        skill_file = resolved_skill_dir / "skill.yaml"
         if not skill_file.exists():
             return
         try:
@@ -370,7 +460,6 @@ class CapabilityRuntime:
             return
 
         loaded_files: list[str] = []
-        resolved_skill_dir = skill_dir.resolve()
         for relative_path in ordered_files:
             resource_file = self._resolve_skill_resource(resolved_skill_dir, relative_path)
             if resource_file is None:
@@ -391,10 +480,12 @@ class CapabilityRuntime:
                 summary=summary.strip(),
                 when_to_use=(when_to_use or "").strip(),
                 source=str(skill_file),
+                source_label=skill_dir.source.label,
+                root_kind=skill_dir.source.kind,
+                root_order=skill_dir.source.order,
                 files=loaded_files,
             )
         )
-        diagnostics.loaded_skills.append(name)
 
     def _require_string_list(
         self,
@@ -422,3 +513,17 @@ class CapabilityRuntime:
         if Path(resource_path).is_absolute():
             return "<absolute path>"
         return resource_path
+
+
+@dataclass(slots=True)
+class SkillRootSource:
+    path: Path
+    kind: str
+    order: int
+    label: str
+
+
+@dataclass(slots=True)
+class SkillRootDir:
+    path: Path
+    source: SkillRootSource

@@ -129,8 +129,11 @@ Project prompt files:
 
 Project skills:
 
+- `~/.astra-python/skills/*/skill.yaml`
 - `.astra/skills/*/skill.yaml`
 - `.astra/skills/*/*.md`
+- `capabilities.skills.paths/*/skill.yaml`
+- `capabilities.skills.paths/*/*.md`
 
 Minimal `skill.yaml` example:
 
@@ -146,6 +149,14 @@ context_files:
 
 Skill files stay on disk until the model reads them with the `read` tool. Astra injects a generated skill catalog into the system prompt on every turn so the model knows which skills are available, what they are for, and which files to read on demand.
 
+If multiple discovered skills share the same `name`, Astra resolves them with a fixed priority instead of silently using scan order:
+
+- project: `.astra/skills`
+- extra paths: `capabilities.skills.paths` in config order, where later paths override earlier paths
+- global: `~/.astra-python/skills`
+
+Duplicate names remain usable, but Astra emits runtime warnings and exposes the winner plus shadowed definitions through `/skills`, `/runtime`, and `/runtime json`.
+
 ## Runtime inspection
 
 Use runtime inspection commands to verify what the agent is currently using.
@@ -153,7 +164,7 @@ Use runtime inspection commands to verify what the agent is currently using.
 - `/tools`
   - Enabled tools and tool default limits (`read.max_lines`, bash timeout, bash output cap)
 - `/skills`
-  - Available skills for the current runtime, including each skill summary and optional `when_to_use` guidance
+  - Available skills for the current runtime, including summary, optional `when_to_use`, active source, and shadowed-definition count when there is a duplicate-name conflict
 - `/templates`
   - Available templates for the current runtime
 
@@ -214,6 +225,8 @@ This is the preferred way to check whether config, prompt files, and the generat
 Use `/resume` to interactively list saved sessions by number and reopen one without typing a session id. After resuming, Astra prints the effective runtime configuration for that session without replaying message history.
 
 Use `/skills` to inspect the currently usable skill catalog from the CLI. If skills are discovered but the `read` tool is disabled, Astra prints a note instead of advertising unusable `/skill:<name>` actions.
+
+Use `/runtime json` when you need full duplicate-skill diagnostics. The `skills.conflicts` array includes the winning source plus every shadowed source for each duplicated skill name.
 
 Use `/templates` to list discovered templates.
 

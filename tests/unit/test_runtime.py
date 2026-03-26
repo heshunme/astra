@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from astra.config import PromptRuntimeConfig, ToolRuntimeConfig
+from astra.config import CapabilitiesConfig, PromptCapabilityConfig, PromptRuntimeConfig, SkillCapabilityConfig, ToolRuntimeConfig
 from astra.runtime import CapabilityRuntime
 
 
@@ -187,6 +187,53 @@ prompt_files:
     )
 
     assert any("read tool is disabled" in warning for warning in snapshot.diagnostics.warnings)
+
+
+def test_runtime_resolves_duplicate_skills_with_explicit_priority(tmp_path: Path, runtime_config_factory) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+
+    global_skill_dir = tmp_path / ".astra-python" / "skills" / "review"
+    extra_one_dir = cwd / "extras-one" / "review"
+    extra_two_dir = cwd / "extras-two" / "review"
+    project_skill_dir = cwd / ".astra" / "skills" / "review"
+
+    for index, skill_dir in enumerate((global_skill_dir, extra_one_dir, extra_two_dir, project_skill_dir), start=1):
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "skill.yaml").write_text(
+            f"""
+name: review
+summary: review skill {index}
+prompt_files:
+  - checklist.md
+""".strip(),
+            encoding="utf-8",
+        )
+        (skill_dir / "checklist.md").write_text(f"body {index}", encoding="utf-8")
+
+    runtime = CapabilityRuntime(cwd)
+    snapshot = runtime.reload(
+        runtime_config_factory(
+            capabilities=CapabilitiesConfig(
+                prompts=PromptCapabilityConfig(paths=[]),
+                skills=SkillCapabilityConfig(paths=["extras-one", "extras-two"]),
+            )
+        )
+    )
+
+    assert snapshot.skills["review"].summary == "review skill 4"
+    assert snapshot.skills["review"].source == str((project_skill_dir / "skill.yaml").resolve())
+    assert snapshot.skills["review"].source_label == "project (.astra/skills)"
+    assert len(snapshot.skills["review"].shadowed_sources) == 3
+    assert snapshot.diagnostics.loaded_skills == ["review"]
+    assert len(snapshot.diagnostics.skill_conflicts) == 1
+    conflict = snapshot.diagnostics.skill_conflicts[0]
+    assert conflict.name == "review"
+    assert conflict.winner_source_label == "project (.astra/skills)"
+    assert "global (~/.astra-python/skills)" in conflict.shadowed_source_labels
+    assert "extra[1]" in conflict.shadowed_source_labels[1]
+    assert "extra[2]" in conflict.shadowed_source_labels[2]
+    assert any("Skill conflict for review" in warning for warning in snapshot.diagnostics.warnings)
 
 
 def test_runtime_template_alias_maps_to_prompt_key(tmp_path: Path, runtime_config_factory) -> None:

@@ -86,6 +86,8 @@ class SkillCatalogEntry:
     when_to_use: str = ""
     files: list[str] = field(default_factory=list)
     source: str = ""
+    source_label: str = ""
+    shadowed_sources: list[str] = field(default_factory=list)
     history_only: bool = False
 
 
@@ -187,6 +189,8 @@ def clone_skill_catalog_entry(entry: SkillCatalogEntry) -> SkillCatalogEntry:
         when_to_use=entry.when_to_use,
         files=list(entry.files),
         source=entry.source,
+        source_label=entry.source_label,
+        shadowed_sources=list(entry.shadowed_sources),
         history_only=entry.history_only,
     )
 

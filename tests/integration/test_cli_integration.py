@@ -42,6 +42,10 @@ def _saved_session_files(home: Path) -> list[Path]:
 
 def _write_skill(cwd: Path, name: str, summary: str = "Review checklist", when_to_use: str | None = None) -> None:
     skill_dir = cwd / ".astra" / "skills" / name
+    _write_skill_dir(skill_dir, name=name, summary=summary, when_to_use=when_to_use)
+
+
+def _write_skill_dir(skill_dir: Path, *, name: str, summary: str = "Review checklist", when_to_use: str | None = None) -> None:
     skill_dir.mkdir(parents=True, exist_ok=True)
     lines = [
         f"name: {name}",
@@ -109,7 +113,30 @@ def test_skills_command_lists_available_skills_with_descriptions(
     assert "Skills" in out
     assert "- review: Review checklist" in out
     assert "Use when: Use for code review requests." in out
+    assert "Source: project (.astra/skills)" in out
     assert str(cwd / ".astra" / "skills" / "review" / "checklist.md") not in out
+
+
+def test_runtime_and_skills_commands_surface_skill_conflicts(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+
+    global_skill_dir = tmp_path / ".astra-python" / "skills" / "review"
+    _write_skill_dir(global_skill_dir, name="review", summary="Global review")
+    _write_skill(cwd, "review", summary="Project review")
+
+    monkeypatch.setattr(builtins, "input", InputFeeder(["/skills", "/runtime json", "/exit"]))
+    cli.main(["--cwd", str(cwd)])
+
+    out = capsys.readouterr().out
+    assert "- review: Project review" in out
+    assert "Source: project (.astra/skills)" in out
+    assert "Shadowed definitions: 1" in out
+    assert '"conflicts": [' in out
+    assert '"winner_source_label": "project (.astra/skills)"' in out
+    assert '"shadowed_source_labels": [' in out
 
 
 def test_skills_command_prints_empty_state_when_no_skills_exist(

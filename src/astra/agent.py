@@ -565,6 +565,27 @@ class Agent:
                 "history_only": self.history_only_skill_names(),
                 "pending": self.pending_skill_name,
                 "loaded": list(snapshot.diagnostics.loaded_skills),
+                "entries": [
+                    {
+                        "name": entry.name,
+                        "summary": entry.summary,
+                        "source": entry.source,
+                        "source_label": entry.source_label,
+                        "shadowed_sources": list(entry.shadowed_sources),
+                        "history_only": entry.history_only,
+                    }
+                    for entry in self.available_skills()
+                ],
+                "conflicts": [
+                    {
+                        "name": conflict.name,
+                        "winner_source": conflict.winner_source,
+                        "winner_source_label": conflict.winner_source_label,
+                        "shadowed_sources": list(conflict.shadowed_sources),
+                        "shadowed_source_labels": list(conflict.shadowed_source_labels),
+                    }
+                    for conflict in snapshot.diagnostics.skill_conflicts
+                ],
             },
             "templates": {
                 "available": self.runtime.list_template_names(),
@@ -856,6 +877,10 @@ class Agent:
             when_to_use = entry.when_to_use or "Read when the task matches this skill or when the user explicitly requests it."
             lines.append(f"- {entry.name}: {entry.summary}")
             lines.append(f"  Use when: {when_to_use}")
+            if entry.source_label:
+                lines.append(f"  Source: {entry.source_label}")
+            if entry.shadowed_sources:
+                lines.append(f"  Shadowed definitions: {len(entry.shadowed_sources)}")
             lines.append(f"  Read in order: {files}")
         return "\n".join(lines)
 
@@ -877,6 +902,8 @@ class Agent:
                         when_to_use=entry.when_to_use,
                         files=list(entry.files),
                         source=entry.source,
+                        source_label=entry.source_label,
+                        shadowed_sources=list(entry.shadowed_sources),
                         history_only=True,
                     )
                 )
@@ -897,6 +924,8 @@ class Agent:
             when_to_use=skill.when_to_use,
             files=list(skill.files),
             source=skill.source,
+            source_label=skill.source_label,
+            shadowed_sources=list(skill.shadowed_sources),
             history_only=False,
         )
 
