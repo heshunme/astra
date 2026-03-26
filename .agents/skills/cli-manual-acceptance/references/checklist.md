@@ -46,7 +46,7 @@ Run the commands in this order unless the user explicitly wants a scoped subset:
 /save
 /skill:review
 /skill:debug
-/template:pairing
+/template:pairing Summarize docs/plan.md in one sentence.
 /runtime prompt
 /runtime json prompt
 /reload
@@ -61,15 +61,15 @@ Run the commands in this order unless the user explicitly wants a scoped subset:
 - `/tools`
   Expect enabled tools and the configured `read.max_lines`, `bash.timeout_seconds`, and `bash.max_output_bytes`.
 - `/skills`
-  Expect discovered skills, or a clear empty-state / read-disabled message.
+  Expect discovered skills, or a clear empty-state / read-disabled message. Skill files should be shown as `skill://...` aliases rather than host absolute paths. If duplicate names exist, expect source labels and shadowed-definition counts.
 - `/templates`
-  Expect discovered templates and active-state markers.
+  Expect discovered templates by name. Do not expect persistent active-state markers.
 - `/runtime`
-  Expect tools, prompt order, discovered prompts, available skills, pending skill state, available templates, active templates, and warning count.
+  Expect tools, prompt order, discovered prompts, available skills, pending skill state, duplicate-skill conflict count, available templates, and warning count.
 - `/runtime warnings`
   Expect either explicit warnings or `No runtime warnings`.
 - `/runtime json`
-  Expect the same runtime state in machine-readable form.
+  Expect the same runtime state in machine-readable form. If duplicate skill names exist, expect `skills.conflicts` entries that identify the winner and shadowed definitions.
 - `/runtime prompt`
   Expect fragment count, fragment metadata, and the assembled prompt with fragment boundaries.
 - `/runtime json prompt`
@@ -85,7 +85,7 @@ Run the commands in this order unless the user explicitly wants a scoped subset:
 - `/sessions`
   Expect either no saved sessions or a session table. Before a normal user prompt, slash commands alone should not materialize a new session.
 - `/resume`
-  Expect a numbered list for the current cwd only, then a restored session summary after selection.
+  Expect a numbered list for the current cwd only, then a restored session summary after selection. The resumed runtime should reflect the saved session snapshot first, not the current YAML/env state.
 - `/fork smoke-copy`
   Expect either `No saved session to fork.` or a new fork id once a saved session exists.
 - `/rename smoke-main`
@@ -96,30 +96,31 @@ Run the commands in this order unless the user explicitly wants a scoped subset:
   Expect a one-shot pending skill message.
 - `/skill:debug`
   Expect a one-shot pending skill message that replaces the prior pending skill.
-- `/template:pairing`
-  Expect template activation for a prompt fragment that was not already loaded from `prompts.order`.
-- `/runtime prompt` after `/template:pairing`
-  Expect the assembled prompt to gain the `prompt:pairing` fragment immediately.
-- `/runtime json prompt` after `/template:pairing`
-  Expect the JSON prompt payload to show the same additional fragment and updated `fragment_count`.
+- `/template:pairing Summarize docs/plan.md in one sentence.`
+  Expect an immediate one-turn request rewrite and model execution. The template body should apply to that rewritten user message only; it must not create persistent template state or modify the system prompt.
+- `/runtime prompt` after `/template:pairing ...`
+  Expect no new `prompt:pairing` fragment in the assembled system prompt. Prompt inspection should remain aligned with the actual provider system prompt.
+- `/runtime json prompt` after `/template:pairing ...`
+  Expect the same prompt payload as `/runtime prompt`, with no template-only fragment added.
 - `/reload`
-  Expect runtime re-application without losing intended session/runtime state.
+  Expect runtime re-application from the current env/YAML without losing intended conversation/session state. After resuming an older session, this is the point where current config should replace the restored snapshot runtime.
 - `/reload code`
-  Expect code reload plus a follow-up runtime reload summary. State should survive the code reload path.
+  Expect code reload plus a follow-up runtime reload summary. Conversation state and runtime-only session state should survive the code reload path.
 
 ## High-Value Checks
 
 - Confirm that `/runtime prompt` and `/runtime json prompt` describe the same assembled prompt.
 - Confirm that discovered skills stay inert until explicitly used.
-- Confirm that template activation changes prompt assembly immediately.
-- Confirm that session restore paths preserve `model`, `base_url`, active templates, pending skill trigger, and conversation state.
+- Confirm that `/template:<name> <request>` rewrites one turn only and does not change prompt assembly or create persistent template state.
+- Confirm that session restore paths preserve the saved runtime snapshot first, including `model`, `base_url`, tools, prompt order, capability paths, pending skill trigger, and conversation state.
+- Confirm that `/reload` switches an already restored session back to the current env/YAML-derived runtime.
 - Confirm that reload is blocked while a response is streaming if that case is under test.
 - Confirm that any failure before the interactive CLI starts is classified as environment setup or interpreter/bootstrap friction before treating it as a product regression.
 
 ## Failure Hints
 
 - Help output mismatch usually points at CLI command registration or extension command exposure.
-- Skill or template listing mismatch usually points at capability discovery or disabled `read`.
-- Prompt mismatch usually points at prompt assembly order, missing fragments, or template/session catalog injection.
+- Skill or template listing mismatch usually points at capability discovery, duplicate-name resolution, alias generation, or disabled `read`.
+- Prompt mismatch usually points at prompt assembly order, missing fragments, or confusion between system-prompt inspection and one-turn template rewriting.
 - Session restore mismatch usually points at snapshot persistence or restore ordering across CLI, session, and agent runtime layers.
 - Reload mismatch usually points at `apply_runtime_config`, code reload reconstruction, or runtime snapshot cloning.

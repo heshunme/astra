@@ -44,14 +44,14 @@ Prefer the most stable execution path that worked in practice:
 - Keep the user informed which step you are currently validating and why it matters.
 - Do not claim real provider validation unless a live-provider path was actually run.
 - Treat slash commands as non-materializing until a normal user prompt is sent.
-- When session behavior is under test, pay attention to `model`, `base_url`, active templates, pending one-shot skill state, and loaded session identity.
-- When validating template activation, choose a template that is not already present in `prompts.order`; otherwise prompt inspection can produce a false negative.
+- When session behavior is under test, pay attention to the saved-vs-current runtime distinction: `model`, `base_url`, tool defaults, prompt order, capability paths, pending one-shot skill state, and loaded session identity.
+- When validating template behavior, remember that `/template:<name> <request>` rewrites one user turn only. It does not activate a persistent template mode or add a prompt fragment to `/runtime prompt`.
 - Distinguish environment failures from product failures. Missing packages from bare `python` or an unprepared `.venv` are execution-path issues, not CLI regressions.
 
 ## Failure Triage
 
 - If `/help` is wrong or missing commands, inspect CLI command registration and extension command exposure.
-- If `/skills`, `/templates`, or `/runtime prompt` disagree with expectations, inspect capability discovery and prompt assembly.
+- If `/skills`, `/templates`, or `/runtime prompt` disagree with expectations, inspect capability discovery, duplicate-skill resolution, skill alias exposure, and prompt assembly.
 - If `/reload` or `/reload code` loses state, inspect runtime apply, snapshot restore, and session serialization.
 - If `/resume` or `/switch` restores the wrong configuration, inspect session snapshot persistence and restore order.
 

@@ -192,7 +192,9 @@ python -m astra --cwd <temp-workspace>
 /save
 /skill:review
 /skill:debug
-/template:repo-rules
+/template:pairing Summarize docs/plan.md in one sentence.
+/runtime prompt
+/runtime json prompt
 /reload
 /reload code
 /exit
@@ -200,10 +202,12 @@ python -m astra --cwd <temp-workspace>
 
 重点观察：
 
-- `/runtime prompt` 是否准确反映默认 prompt、生成的 skill catalog、以及激活后的 template 变化
+- `/runtime prompt` 是否准确反映默认 prompt 和生成的 skill catalog；`/template:<name> <request>` 不应把 template 变成新的 system prompt fragment
 - `/runtime json prompt` 是否与 `/runtime prompt` 的内容一致，只是以机器可读形式输出
-- `/skill:<name>` 和 `/template:<name>` 是否真的影响最终 assembled prompt
-- `/reload` 后 model/base_url/tools/runtime summary 是否保持一致
+- `/skill:<name>` 是否保持 inert 直到显式触发，skill 文件是否以 `skill://...` 别名暴露给 `read`
+- `/template:<name> <request>` 是否只改写这一轮 user message，而不是创建持久 template 状态
+- `/resume`/`/switch` 是否先恢复保存时的完整 runtime snapshot；随后 `/reload` 是否切回当前 env/YAML runtime
+- `/runtime json` 在有重复 skill 名称时是否能看到 `skills.conflicts`
 - `fork`、`rename`、`save`、`switch`、`resume` 是否真的落盘并能恢复
 - slash 命令本身不会创建空会话，只有正常用户消息才会 materialize session
 
