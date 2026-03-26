@@ -387,6 +387,9 @@ def main(
     config_manager_factory: ConfigManagerFactory | None = None,
 ) -> None:
     args = parse_args(argv or sys.argv[1:])
+    cli_model_override = args.model
+    cli_base_url_override = args.base_url
+    cli_system_prompt_override = args.system_prompt
     runtime_builder = runtime_factory or CapabilityRuntime
     store_builder = session_store_factory or SessionStore
     config_builder = config_manager_factory or ConfigManager
@@ -410,7 +413,13 @@ def main(
         except ConfigError as exc:
             print(f"Warning: {exc}", file=sys.stderr)
             raw_config = RuntimeConfig()
-        return resolve_runtime_config(raw_config, args.model, args.base_url, args.system_prompt, env=runtime_env)
+        return resolve_runtime_config(
+            raw_config,
+            cli_model_override,
+            cli_base_url_override,
+            cli_system_prompt_override,
+            env=runtime_env,
+        )
 
     runtime_config = load_runtime()
     api_key = runtime_env.get("OPENAI_API_KEY")
@@ -602,8 +611,7 @@ def main(
             if not remainder:
                 print(agent.config.model)
                 return True
-            args.model = remainder.strip()
-            agent.set_model(args.model)
+            agent.set_model(remainder.strip())
             if session_state.materialized:
                 persist_agent_state()
             print(f"Model set to {agent.config.model}")
@@ -614,8 +622,7 @@ def main(
             if not remainder:
                 print(agent.config.base_url)
                 return True
-            args.base_url = remainder.strip()
-            agent.set_base_url(args.base_url)
+            agent.set_base_url(remainder.strip())
             if session_state.materialized:
                 persist_agent_state()
             print(f"Base URL set to {agent.config.base_url}")

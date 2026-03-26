@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import builtins
+import importlib
 import io
 import sys
 import time
@@ -385,6 +386,56 @@ capabilities:
     assert "read.max_lines=999" in after_reload
     assert "prompts.order=builtin:base, config:system" in after_reload
     assert "- review: Extra two review" in after_reload
+
+
+def test_reload_commands_restore_config_baseline_after_resume(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+    _write_project_config(
+        cwd,
+        """
+model: baseline-model
+base_url: http://baseline-gateway/v1
+""",
+    )
+
+    def fake_stream_chat(self, _request):
+        yield ProviderEvent(type="text_delta", delta="ok")
+        yield ProviderEvent(type="done")
+
+    monkeypatch.setattr(OpenAICompatibleProvider, "stream_chat", fake_stream_chat)
+    monkeypatch.setattr(importlib, "reload", lambda module: module)
+    monkeypatch.setattr(
+        builtins,
+        "input",
+        InputFeeder(["/model saved-model", "/base-url http://saved-gateway/v1", "hello", "/exit"]),
+    )
+    cli.main(["--cwd", str(cwd)])
+
+    capsys.readouterr()
+    monkeypatch.setattr(
+        builtins,
+        "input",
+        InputFeeder(["/resume", "1", "/reload", "/reload code", "/exit"]),
+    )
+    cli.main(["--cwd", str(cwd)])
+
+    out = capsys.readouterr().out
+    first_restore, first_reload, second_reload = out.split("Reloaded runtime configuration.")
+    assert "Resumed hello" in first_restore
+    assert "model=saved-model" in first_restore
+    assert "base_url=http://saved-gateway/v1" in first_restore
+    assert "model=baseline-model" in first_reload
+    assert "base_url=http://baseline-gateway/v1" in first_reload
+    assert "model=saved-model" not in first_reload
+    assert "base_url=http://saved-gateway/v1" not in first_reload
+    assert "Code modules reloaded." in first_reload
+    assert "model=baseline-model" in second_reload
+    assert "base_url=http://baseline-gateway/v1" in second_reload
+    assert "model=saved-model" not in second_reload
+    assert "base_url=http://saved-gateway/v1" not in second_reload
 
 
 def test_switch_command(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -80,6 +80,7 @@ Saved sessions persist both message history and the agent snapshot needed to res
 - the full resolved runtime config for that session, including `model`, `base_url`, `system_prompt`, tool enablement and defaults, prompt order, and capability paths
 
 When you restore a session via `--session`, `/switch`, or `/resume`, Astra reapplies that saved runtime snapshot before continuing. Use `/reload` when you explicitly want to switch back to the current env and YAML-derived runtime.
+Interactive commands such as `/model` and `/base-url` change only the current session runtime and any snapshots saved from it; they do not replace the env/YAML-derived baseline that `/reload` and `/reload code` restore.
 
 ## Reloadable config
 
