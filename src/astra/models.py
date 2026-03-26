@@ -62,6 +62,7 @@ class ToolContext:
     timeout_seconds: int
     max_output_bytes: int
     read_max_lines: int
+    skill_file_aliases: dict[str, Path] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

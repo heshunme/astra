@@ -149,6 +149,8 @@ context_files:
 
 Skill files stay on disk until the model reads them with the `read` tool. Astra injects a generated skill catalog into the system prompt on every turn so the model knows which skills are available, what they are for, and which files to read on demand.
 
+Skill resources are exposed to the model as read-only virtual paths such as `skill://review/checklist.md`. The `read` tool resolves only the currently discovered skill aliases plus normal workspace-relative paths; it does not expose host absolute paths for global or extra-path skills.
+
 If multiple discovered skills share the same `name`, Astra resolves them with a fixed priority instead of silently using scan order:
 
 - project: `.astra/skills`
@@ -224,7 +226,7 @@ This is the preferred way to check whether config, prompt files, and the generat
 
 Use `/resume` to interactively list saved sessions by number and reopen one without typing a session id. After resuming, Astra prints the effective runtime configuration for that session without replaying message history.
 
-Use `/skills` to inspect the currently usable skill catalog from the CLI. If skills are discovered but the `read` tool is disabled, Astra prints a note instead of advertising unusable `/skill:<name>` actions.
+Use `/skills` to inspect the currently usable skill catalog from the CLI. The listed files are `skill://...` aliases that can be passed to the `read` tool. If skills are discovered but the `read` tool is disabled, Astra prints a note instead of advertising unusable `/skill:<name>` actions.
 
 Use `/runtime json` when you need full duplicate-skill diagnostics. The `skills.conflicts` array includes the winning source plus every shadowed source for each duplicated skill name.
 

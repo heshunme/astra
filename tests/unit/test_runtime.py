@@ -62,7 +62,8 @@ prompt_files:
 
     assert runtime.has_skill("review")
     assert snapshot.skills["review"].summary == "review checklist"
-    assert snapshot.skills["review"].files == [str((skill_dir / "checklist.md").resolve())]
+    assert snapshot.skills["review"].files == ["skill://review/checklist.md"]
+    assert snapshot.skill_file_aliases["skill://review/checklist.md"] == (skill_dir / "checklist.md").resolve()
     assert "skill prompt body" not in runtime.inspect_prompt(cfg).assembled
     assert "skill:review" not in snapshot.prompt_fragments
 
@@ -161,7 +162,8 @@ prompt_files:
     snapshot = runtime.reload(runtime_config_factory())
 
     assert runtime.has_skill("review")
-    assert snapshot.skills["review"].files == [str((skill_dir / "checklist.md").resolve())]
+    assert snapshot.skills["review"].files == ["skill://review/checklist.md"]
+    assert snapshot.skill_file_aliases["skill://review/checklist.md"] == (skill_dir / "checklist.md").resolve()
 
 
 def test_runtime_warns_when_skills_exist_but_read_tool_is_disabled(tmp_path: Path, runtime_config_factory) -> None:
@@ -224,6 +226,8 @@ prompt_files:
     assert snapshot.skills["review"].summary == "review skill 4"
     assert snapshot.skills["review"].source == str((project_skill_dir / "skill.yaml").resolve())
     assert snapshot.skills["review"].source_label == "project (.astra/skills)"
+    assert snapshot.skills["review"].files == ["skill://review/checklist.md"]
+    assert snapshot.skill_file_aliases["skill://review/checklist.md"] == (project_skill_dir / "checklist.md").resolve()
     assert len(snapshot.skills["review"].shadowed_sources) == 3
     assert snapshot.diagnostics.loaded_skills == ["review"]
     assert len(snapshot.diagnostics.skill_conflicts) == 1
@@ -234,6 +238,29 @@ prompt_files:
     assert "extra[1]" in conflict.shadowed_source_labels[1]
     assert "extra[2]" in conflict.shadowed_source_labels[2]
     assert any("Skill conflict for review" in warning for warning in snapshot.diagnostics.warnings)
+
+
+def test_runtime_assigns_skill_aliases_for_global_skills(tmp_path: Path, runtime_config_factory) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+    skill_dir = tmp_path / ".astra-python" / "skills" / "review"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "skill.yaml").write_text(
+        """
+name: review
+summary: global review checklist
+prompt_files:
+  - checklist.md
+""".strip(),
+        encoding="utf-8",
+    )
+    (skill_dir / "checklist.md").write_text("global body", encoding="utf-8")
+
+    runtime = CapabilityRuntime(cwd)
+    snapshot = runtime.reload(runtime_config_factory())
+
+    assert snapshot.skills["review"].files == ["skill://review/checklist.md"]
+    assert snapshot.skill_file_aliases["skill://review/checklist.md"] == (skill_dir / "checklist.md").resolve()
 
 
 def test_runtime_template_alias_maps_to_prompt_key(tmp_path: Path, runtime_config_factory) -> None:

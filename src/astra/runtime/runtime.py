@@ -46,6 +46,7 @@ class SkillSpec:
     root_order: int
     shadowed_sources: list[str] = field(default_factory=list)
     files: list[str] = field(default_factory=list)
+    file_aliases: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -70,6 +71,7 @@ class RuntimeSnapshot:
     tools: dict[str, ToolSpec]
     prompt_fragments: dict[str, PromptFragment]
     skills: dict[str, SkillSpec]
+    skill_file_aliases: dict[str, Path]
     diagnostics: RuntimeDiagnostics
 
 
@@ -212,7 +214,13 @@ class CommandRegistry:
 class CapabilityRuntime:
     def __init__(self, cwd: Path):
         self.cwd = cwd
-        self._snapshot = RuntimeSnapshot(tools={}, prompt_fragments={}, skills={}, diagnostics=RuntimeDiagnostics())
+        self._snapshot = RuntimeSnapshot(
+            tools={},
+            prompt_fragments={},
+            skills={},
+            skill_file_aliases={},
+            diagnostics=RuntimeDiagnostics(),
+        )
 
     def snapshot(self) -> RuntimeSnapshot:
         return self._snapshot
@@ -255,6 +263,7 @@ class CapabilityRuntime:
             tools=enabled_tools,
             prompt_fragments=prompt_registry.items(),
             skills=resolved_skills,
+            skill_file_aliases=self._collect_skill_file_aliases(resolved_skills),
             diagnostics=diagnostics,
         )
         return self._snapshot
@@ -460,6 +469,7 @@ class CapabilityRuntime:
             return
 
         loaded_files: list[str] = []
+        file_aliases: dict[str, str] = {}
         for relative_path in ordered_files:
             resource_file = self._resolve_skill_resource(resolved_skill_dir, relative_path)
             if resource_file is None:
@@ -472,7 +482,9 @@ class CapabilityRuntime:
                     f"Skill resource not found: {skill_file} ({self._format_skill_resource_reference(relative_path)})"
                 )
                 return
-            loaded_files.append(str(resource_file))
+            alias = self._build_skill_resource_alias(name.strip(), resource_file.relative_to(resolved_skill_dir))
+            loaded_files.append(alias)
+            file_aliases[alias] = str(resource_file)
 
         skill_registry.register(
             SkillSpec(
@@ -484,6 +496,7 @@ class CapabilityRuntime:
                 root_kind=skill_dir.source.kind,
                 root_order=skill_dir.source.order,
                 files=loaded_files,
+                file_aliases=file_aliases,
             )
         )
 
@@ -513,6 +526,17 @@ class CapabilityRuntime:
         if Path(resource_path).is_absolute():
             return "<absolute path>"
         return resource_path
+
+    def _build_skill_resource_alias(self, skill_name: str, relative_path: Path) -> str:
+        normalized = relative_path.as_posix().lstrip("/")
+        return f"skill://{skill_name}/{normalized}"
+
+    def _collect_skill_file_aliases(self, skills: dict[str, SkillSpec]) -> dict[str, Path]:
+        aliases: dict[str, Path] = {}
+        for skill in skills.values():
+            for alias, target in skill.file_aliases.items():
+                aliases[alias] = Path(target)
+        return aliases
 
 
 @dataclass(slots=True)

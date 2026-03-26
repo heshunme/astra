@@ -70,6 +70,7 @@ class _CoreEngine:
         self._read_max_lines = 400
         self._bash_timeout_seconds = 60
         self._bash_max_output_bytes = 32 * 1024
+        self._skill_file_aliases: dict[str, Path] = {}
 
     @property
     def messages(self) -> list[Message]:
@@ -91,6 +92,7 @@ class _CoreEngine:
         *,
         tools: dict[str, object] | None = None,
         current_system_prompt: str | None = None,
+        skill_file_aliases: dict[str, Path] | None = None,
         rebuild_provider: bool,
     ) -> None:
         prior_base_url = self.config.base_url
@@ -105,6 +107,8 @@ class _CoreEngine:
             self.tools = dict(tools)
         if current_system_prompt is not None:
             self.current_system_prompt = current_system_prompt
+        if skill_file_aliases is not None:
+            self._skill_file_aliases = dict(skill_file_aliases)
         if rebuild_provider or prior_base_url != runtime_config.base_url:
             self.provider = self._provider_factory(runtime_config.base_url)
 
@@ -178,6 +182,7 @@ class _CoreEngine:
             timeout_seconds=self._bash_timeout_seconds,
             max_output_bytes=self._bash_max_output_bytes,
             read_max_lines=self._read_max_lines,
+            skill_file_aliases=dict(self._skill_file_aliases),
         )
 
     def run(
@@ -465,6 +470,7 @@ class Agent:
             self.config.cwd,
             tools=self.tools,
             current_system_prompt="",
+            skill_file_aliases=self.runtime.snapshot().skill_file_aliases,
             rebuild_provider=False,
         )
         self._refresh_system_prompt()
@@ -522,6 +528,7 @@ class Agent:
             self.config.cwd,
             tools=snapshot.tools,
             current_system_prompt="",
+            skill_file_aliases=snapshot.skill_file_aliases,
             rebuild_provider=True,
         )
         self._merge_skill_catalog_snapshot(snapshot.skills)

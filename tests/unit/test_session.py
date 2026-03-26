@@ -30,7 +30,7 @@ def test_session_save_and_load_round_trip(tmp_path: Path) -> None:
             name="review",
             summary="review checklist",
             when_to_use="Use for code review requests.",
-            files=["/repo/.astra/skills/review/checklist.md"],
+            files=["skill://review/checklist.md"],
             source="/repo/.astra/skills/review/skill.yaml",
             source_label="project (.astra/skills)",
             shadowed_sources=["/repo/shared/skills/review/skill.yaml"],
@@ -53,6 +53,7 @@ def test_session_save_and_load_round_trip(tmp_path: Path) -> None:
     assert loaded.model == "gpt-test"
     assert loaded.system_prompt == "sys"
     assert loaded.skill_catalog_snapshot[0].name == "review"
+    assert loaded.skill_catalog_snapshot[0].files == ["skill://review/checklist.md"]
     assert not loaded.skill_catalog_snapshot[0].history_only
     assert loaded.skill_catalog_snapshot[0].source_label == "project (.astra/skills)"
     assert loaded.skill_catalog_snapshot[0].shadowed_sources == ["/repo/shared/skills/review/skill.yaml"]
