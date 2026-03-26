@@ -64,6 +64,8 @@ When reporting results, use this structure:
 - First failing step, or confirmation that all checked steps matched
 - Next file or subsystem to inspect if something diverged
 
+The final execution summary shown to the user must be written in Chinese, even if the checklist commands and intermediate notes stay in English.
+
 ## Resources
 
 - Read [references/checklist.md](references/checklist.md) for the ordered command list and expected observations.

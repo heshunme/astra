@@ -37,6 +37,11 @@ Run the commands in this order unless the user explicitly wants a scoped subset:
 /runtime json prompt
 /model
 /model smoke-model
+/skill:review
+/skill:debug
+/template:pairing Summarize docs/plan.md in one sentence.
+/runtime prompt
+/runtime json prompt
 /base-url
 /base-url http://gateway.local/v1
 /sessions
@@ -44,11 +49,6 @@ Run the commands in this order unless the user explicitly wants a scoped subset:
 /fork smoke-copy
 /rename smoke-main
 /save
-/skill:review
-/skill:debug
-/template:pairing Summarize docs/plan.md in one sentence.
-/runtime prompt
-/runtime json prompt
 /reload
 /reload code
 /exit
@@ -78,6 +78,16 @@ Run the commands in this order unless the user explicitly wants a scoped subset:
   Expect the current model value.
 - `/model smoke-model`
   Expect `Model set to smoke-model`.
+- `/skill:review`
+  Expect a one-shot pending skill message.
+- `/skill:debug`
+  Expect a one-shot pending skill message that replaces the prior pending skill.
+- `/template:pairing Summarize docs/plan.md in one sentence.`
+  Expect an immediate one-turn request rewrite and model execution. Run this before changing `base_url` so template semantics are not masked by an intentionally unreachable gateway.
+- `/runtime prompt` after `/template:pairing ...`
+  Expect no new `prompt:pairing` fragment in the assembled system prompt. Prompt inspection should remain aligned with the actual provider system prompt.
+- `/runtime json prompt` after `/template:pairing ...`
+  Expect the same prompt payload as `/runtime prompt`, with no template-only fragment added.
 - `/base-url`
   Expect the current base URL.
 - `/base-url http://gateway.local/v1`
@@ -92,16 +102,6 @@ Run the commands in this order unless the user explicitly wants a scoped subset:
   Expect either `No saved session to rename.` or the updated name once a saved session exists.
 - `/save`
   Expect either `No session to save.` or `Saved ...` once a saved session exists.
-- `/skill:review`
-  Expect a one-shot pending skill message.
-- `/skill:debug`
-  Expect a one-shot pending skill message that replaces the prior pending skill.
-- `/template:pairing Summarize docs/plan.md in one sentence.`
-  Expect an immediate one-turn request rewrite and model execution. The template body should apply to that rewritten user message only; it must not create persistent template state or modify the system prompt.
-- `/runtime prompt` after `/template:pairing ...`
-  Expect no new `prompt:pairing` fragment in the assembled system prompt. Prompt inspection should remain aligned with the actual provider system prompt.
-- `/runtime json prompt` after `/template:pairing ...`
-  Expect the same prompt payload as `/runtime prompt`, with no template-only fragment added.
 - `/reload`
   Expect runtime re-application from the current env/YAML without losing intended conversation/session state. After resuming an older session, this is the point where current config should replace the restored snapshot runtime.
 - `/reload code`

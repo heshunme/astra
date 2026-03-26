@@ -183,6 +183,11 @@ python -m astra --cwd <temp-workspace>
 /runtime json prompt
 /model
 /model smoke-model
+/skill:review
+/skill:debug
+/template:pairing Summarize docs/plan.md in one sentence.
+/runtime prompt
+/runtime json prompt
 /base-url
 /base-url http://gateway.local/v1
 /sessions
@@ -190,11 +195,6 @@ python -m astra --cwd <temp-workspace>
 /fork smoke-copy
 /rename smoke-main
 /save
-/skill:review
-/skill:debug
-/template:pairing Summarize docs/plan.md in one sentence.
-/runtime prompt
-/runtime json prompt
 /reload
 /reload code
 /exit
@@ -202,6 +202,7 @@ python -m astra --cwd <temp-workspace>
 
 重点观察：
 
+- `/template:<name> <request>` 最好放在修改 `/base-url` 之前验证；否则如果故意把 `base_url` 指到不可达地址，只能看到请求失败，测不到 template 一次性改写语义
 - `/runtime prompt` 是否准确反映默认 prompt 和生成的 skill catalog；`/template:<name> <request>` 不应把 template 变成新的 system prompt fragment
 - `/runtime json prompt` 是否与 `/runtime prompt` 的内容一致，只是以机器可读形式输出
 - `/skill:<name>` 是否保持 inert 直到显式触发，skill 文件是否以 `skill://...` 别名暴露给 `read`
