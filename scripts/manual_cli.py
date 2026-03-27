@@ -31,9 +31,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Python interpreter used to launch `python -m astra`. Defaults to the current interpreter.",
     )
     parser.add_argument(
-        "--cleanup",
+        "--keep-temp",
         action="store_true",
-        help="Delete the temporary directory after the CLI exits successfully.",
+        help="Keep the temporary directory after the CLI exits successfully.",
     )
     parser.add_argument(
         "--no-launch",
@@ -308,12 +308,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         result_code = result.returncode
 
-    if args.cleanup and result_code == 0:
-        shutil.rmtree(temp_root, ignore_errors=True)
-    else:
+    keep_temp = args.keep_temp or args.no_launch or result_code != 0
+    if keep_temp:
         print()
         print(f"Workspace kept at: {workspace}")
         print(f"Temp root kept at: {temp_root}")
+    else:
+        shutil.rmtree(temp_root, ignore_errors=True)
 
     return result_code
 

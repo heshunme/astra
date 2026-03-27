@@ -314,7 +314,7 @@ This prepares a temporary workspace with:
 - sample files for `read`, `edit`, `find`, `grep`, `ls`, and `bash`
 - a workspace `.env` symlink or copy sourced from the repository `.env`
 
-It then launches `python -m astra --cwd <temp-workspace>` so you can manually test the CLI against a disposable project. Use `--no-launch` to only prepare the workspace, or `--cleanup` to remove it after the session exits successfully.
+It then launches `python -m astra --cwd <temp-workspace>` so you can manually test the CLI against a disposable project. By default it removes the temporary directory after a successful session. Use `--no-launch` to only prepare the workspace, or `--keep-temp` to preserve it after the CLI exits.
 
 Extended validation (recommended for nightly runs):
 
