@@ -100,11 +100,12 @@ sequenceDiagram
 - `capabilities.prompts.paths`
 4. 扫描 skill 根目录子目录中的 `skill.yaml`：
 - `~/.astra-python/skills/*/skill.yaml`
-- `<cwd>/.astra/skills/*/skill.yaml`
 - `capabilities.skills.paths/*/skill.yaml`
+- `<cwd>/.astra/skills/*/skill.yaml`
 5. 解析 skill 元数据（`name/summary/when_to_use`）和资源文件列表（`prompt_files/template_files/context_files`），仅做索引，不预加载正文。
-6. 生成 diagnostics（`warnings/loaded_prompts/loaded_skills`）。
-7. 若发现 skill 但 `read` 未启用，写入 warning。
+6. 若 skill 重名，按固定优先级选出唯一生效项：project > extra paths（后配置者覆盖前配置者） > global；同时记录冲突 diagnostics。
+7. 生成 diagnostics（`warnings/loaded_prompts/loaded_skills/skill_conflicts`）。
+8. 若发现 skill 但 `read` 未启用，写入 warning。
 
 注意：`capabilities.skills.enabled` 已移除，配置中出现会报错。
 
@@ -211,7 +212,7 @@ sequenceDiagram
 
 1. 流式响应期间，`/reload` 与 `/reload code` 都会被拒绝。
 2. `/reload`：重新读取 env/config 并 `apply_runtime_config()`，打印 reload 摘要与 warnings。
-3. `/reload code`：best-effort 热重载 Python 模块，恢复快照后再走一次 `/reload` 逻辑。
+3. `/reload code`：best-effort 热重载 Python 模块，先恢复会话快照，再走一次 `/reload` 逻辑。
 
 ## 10. 工具执行与安全边界
 

@@ -109,6 +109,8 @@ def agent_snapshot_to_dict(snapshot: AgentSnapshot) -> dict:
                     "when_to_use": entry.when_to_use,
                     "files": list(entry.files),
                     "source": entry.source,
+                    "source_label": entry.source_label,
+                    "shadowed_sources": list(entry.shadowed_sources),
                     "history_only": entry.history_only,
                 }
                 for entry in snapshot.runtime.skill_catalog_snapshot
@@ -171,6 +173,8 @@ def session_to_dict(session: Session) -> dict:
                 "when_to_use": entry.when_to_use,
                 "files": list(entry.files),
                 "source": entry.source,
+                "source_label": entry.source_label,
+                "shadowed_sources": list(entry.shadowed_sources),
                 "history_only": entry.history_only,
             }
             for entry in session.skill_catalog_snapshot
@@ -292,6 +296,8 @@ def _skill_catalog_from_list(raw_entries: list[object]) -> list[SkillCatalogEntr
                 when_to_use=raw.get("when_to_use", ""),
                 files=list(raw.get("files", [])),
                 source=raw.get("source", ""),
+                source_label=raw.get("source_label", ""),
+                shadowed_sources=list(raw.get("shadowed_sources", [])),
                 history_only=bool(raw.get("history_only", False)),
             )
         )

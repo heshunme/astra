@@ -181,9 +181,14 @@ prompt_files:
     assert sent_messages[0]["role"] == "system"
     assert "Skill catalog for this session" in str(sent_messages[0]["content"])
     assert "Review checklist" in str(sent_messages[0]["content"])
+    assert "skill://review/checklist.md" in str(sent_messages[0]["content"])
+    assert str((skill_dir / "checklist.md").resolve()) not in str(sent_messages[0]["content"])
     assert sent_messages[1]["role"] == "user"
     assert "Please use the skill 'review' for this turn only." in str(sent_messages[1]["content"])
+    assert "skill://review/checklist.md" in str(sent_messages[1]["content"])
     assert agent.messages[0].metadata["raw_user_input"] == "/skill:review Review src/demo.py for issues."
+    assert agent.messages[0].metadata["skill_trigger"]["source"] == "skill://review"
+    assert agent.messages[0].metadata["skill_trigger"]["files"] == ["skill://review/checklist.md"]
 
 
 def test_agent_pending_skill_consumes_next_prompt_once(tmp_path: Path, runtime_config_factory) -> None:
@@ -218,6 +223,49 @@ prompt_files:
     assert consumed_again
     assert plain_text == "A plain follow-up."
     assert plain_metadata is None
+
+
+def test_agent_can_read_global_skill_file_via_alias(tmp_path: Path, runtime_config_factory) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+    skill_dir = tmp_path / ".astra-python" / "skills" / "review"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "skill.yaml").write_text(
+        """
+name: review
+summary: Review checklist
+prompt_files:
+  - checklist.md
+""".strip(),
+        encoding="utf-8",
+    )
+    (skill_dir / "checklist.md").write_text("Global review checklist.", encoding="utf-8")
+
+    agent = _build_agent(cwd, runtime_config_factory())
+    agent.provider = FakeProvider(
+        [
+            [
+                ProviderEvent(
+                    type="tool_call_delta",
+                    index=0,
+                    tool_call_id="call-1",
+                    tool_name="read",
+                    tool_arguments_delta='{"path":"skill://review/checklist.md"}',
+                ),
+                ProviderEvent(type="done"),
+            ],
+            [
+                ProviderEvent(type="text_delta", delta="done"),
+                ProviderEvent(type="done"),
+            ],
+        ]
+    )
+
+    result = agent.prompt("Use the review skill.")
+
+    assert result.error is None
+    assert len(result.tool_results) == 1
+    assert "OK\n1: Global review checklist." in result.tool_results[0].content
 
 
 def test_agent_run_template_executes_through_typed_service_api(tmp_path: Path, runtime_config_factory) -> None:

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from astra.config import ResolvedRuntimeConfig
+from astra.config import CapabilitiesConfig, PromptCapabilityConfig, PromptRuntimeConfig, ResolvedRuntimeConfig, SkillCapabilityConfig, ToolRuntimeConfig
 from astra.models import (
     AgentConversationState,
     AgentRuntimeState,
@@ -30,8 +30,10 @@ def test_session_save_and_load_round_trip(tmp_path: Path) -> None:
             name="review",
             summary="review checklist",
             when_to_use="Use for code review requests.",
-            files=["/repo/.astra/skills/review/checklist.md"],
-            source="/repo/.astra/skills/review/skill.yaml",
+            files=["skill://review/checklist.md"],
+            source="skill://review",
+            source_label="project (.astra/skills)",
+            shadowed_sources=["skill://review"],
         )
     )
     session.messages.append(
@@ -51,9 +53,46 @@ def test_session_save_and_load_round_trip(tmp_path: Path) -> None:
     assert loaded.model == "gpt-test"
     assert loaded.system_prompt == "sys"
     assert loaded.skill_catalog_snapshot[0].name == "review"
+    assert loaded.skill_catalog_snapshot[0].files == ["skill://review/checklist.md"]
     assert not loaded.skill_catalog_snapshot[0].history_only
+    assert loaded.skill_catalog_snapshot[0].source == "skill://review"
+    assert loaded.skill_catalog_snapshot[0].source_label == "project (.astra/skills)"
+    assert loaded.skill_catalog_snapshot[0].shadowed_sources == ["skill://review"]
     assert loaded.messages[0].tool_calls[0].name == "read"
     assert loaded.messages[0].metadata == {"a": 1}
+
+
+def test_session_load_accepts_legacy_absolute_skill_sources(tmp_path: Path) -> None:
+    store = SessionStore(base_dir=tmp_path)
+    session = store.create(cwd="/repo", model="gpt-test", system_prompt="sys", name="demo")
+    payload = {
+        "id": session.id,
+        "name": session.name,
+        "cwd": session.cwd,
+        "created_at": session.created_at,
+        "updated_at": session.updated_at,
+        "model": session.model,
+        "system_prompt": session.system_prompt,
+        "messages": [],
+        "skill_catalog_snapshot": [
+            {
+                "name": "review",
+                "summary": "review checklist",
+                "when_to_use": "Use for code review requests.",
+                "files": ["skill://review/checklist.md"],
+                "source": "/repo/.astra/skills/review/skill.yaml",
+                "source_label": "project (.astra/skills)",
+                "shadowed_sources": ["/repo/shared/skills/review/skill.yaml"],
+                "history_only": False,
+            }
+        ],
+    }
+    (tmp_path / f"{session.id}.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    loaded = store.load(session.id)
+
+    assert loaded.skill_catalog_snapshot[0].source == "/repo/.astra/skills/review/skill.yaml"
+    assert loaded.skill_catalog_snapshot[0].shadowed_sources == ["/repo/shared/skills/review/skill.yaml"]
 
 
 def test_session_fork_keeps_parent_and_messages(tmp_path: Path) -> None:
@@ -108,6 +147,48 @@ def test_session_load_preserves_agent_snapshot(tmp_path: Path) -> None:
     assert loaded.agent_snapshot.runtime.runtime_config.base_url == "http://gateway/v1"
     assert loaded.agent_snapshot.runtime.pending_skill_trigger is not None
     assert loaded.agent_snapshot.runtime.pending_skill_trigger.name == "review"
+
+
+def test_session_load_preserves_full_runtime_config_in_agent_snapshot(tmp_path: Path) -> None:
+    store = SessionStore(base_dir=tmp_path)
+    session = store.create(cwd="/repo", model="gpt-test", system_prompt="sys", name="demo")
+    session.agent_snapshot = AgentSnapshot(
+        conversation=AgentConversationState(messages=[]),
+        runtime=AgentRuntimeState(
+            cwd="/repo",
+            runtime_config=ResolvedRuntimeConfig(
+                model="gpt-test",
+                base_url="http://gateway/v1",
+                system_prompt="sys",
+                tools=ToolRuntimeConfig(
+                    enabled_tools=["read", "ls"],
+                    read_max_lines=123,
+                    bash_timeout_seconds=45,
+                    bash_max_output_bytes=2048,
+                ),
+                prompts=PromptRuntimeConfig(order=["builtin:base"]),
+                capabilities=CapabilitiesConfig(
+                    prompts=PromptCapabilityConfig(paths=["/repo/prompts"]),
+                    skills=SkillCapabilityConfig(paths=["/repo/skills"]),
+                ),
+            ),
+            skill_catalog_snapshot=[],
+            pending_skill_trigger=None,
+        ),
+    )
+
+    store.save(session)
+    loaded = store.load(session.id)
+
+    assert loaded.agent_snapshot is not None
+    runtime_config = loaded.agent_snapshot.runtime.runtime_config
+    assert runtime_config.tools.enabled_tools == ["read", "ls"]
+    assert runtime_config.tools.read_max_lines == 123
+    assert runtime_config.tools.bash_timeout_seconds == 45
+    assert runtime_config.tools.bash_max_output_bytes == 2048
+    assert runtime_config.prompts.order == ["builtin:base"]
+    assert runtime_config.capabilities.prompts.paths == ["/repo/prompts"]
+    assert runtime_config.capabilities.skills.paths == ["/repo/skills"]
 
 
 def test_session_load_ignores_legacy_template_runtime_state(tmp_path: Path) -> None:

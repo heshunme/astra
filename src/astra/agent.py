@@ -13,7 +13,6 @@ from .models import (
     AgentRunResult,
     AgentRuntimeState,
     AgentSnapshot,
-    CoreCommandResult,
     Message,
     PendingSkillTriggerState,
     SkillCatalogEntry,
@@ -70,6 +69,7 @@ class _CoreEngine:
         self._read_max_lines = 400
         self._bash_timeout_seconds = 60
         self._bash_max_output_bytes = 32 * 1024
+        self._skill_file_aliases: dict[str, Path] = {}
 
     @property
     def messages(self) -> list[Message]:
@@ -91,6 +91,7 @@ class _CoreEngine:
         *,
         tools: dict[str, object] | None = None,
         current_system_prompt: str | None = None,
+        skill_file_aliases: dict[str, Path] | None = None,
         rebuild_provider: bool,
     ) -> None:
         prior_base_url = self.config.base_url
@@ -105,6 +106,8 @@ class _CoreEngine:
             self.tools = dict(tools)
         if current_system_prompt is not None:
             self.current_system_prompt = current_system_prompt
+        if skill_file_aliases is not None:
+            self._skill_file_aliases = dict(skill_file_aliases)
         if rebuild_provider or prior_base_url != runtime_config.base_url:
             self.provider = self._provider_factory(runtime_config.base_url)
 
@@ -178,6 +181,7 @@ class _CoreEngine:
             timeout_seconds=self._bash_timeout_seconds,
             max_output_bytes=self._bash_max_output_bytes,
             read_max_lines=self._read_max_lines,
+            skill_file_aliases=dict(self._skill_file_aliases),
         )
 
     def run(
@@ -317,8 +321,6 @@ class _CoreEngine:
 
 
 class Agent:
-    _EXTENSION_COMMAND_USAGES = ["/skill:<name> [request]", "/template:<name> <request>"]
-
     def __init__(
         self,
         config: AgentConfig,
@@ -465,6 +467,7 @@ class Agent:
             self.config.cwd,
             tools=self.tools,
             current_system_prompt="",
+            skill_file_aliases=self.runtime.snapshot().skill_file_aliases,
             rebuild_provider=False,
         )
         self._refresh_system_prompt()
@@ -522,6 +525,7 @@ class Agent:
             self.config.cwd,
             tools=snapshot.tools,
             current_system_prompt="",
+            skill_file_aliases=snapshot.skill_file_aliases,
             rebuild_provider=True,
         )
         self._merge_skill_catalog_snapshot(snapshot.skills)
@@ -565,6 +569,27 @@ class Agent:
                 "history_only": self.history_only_skill_names(),
                 "pending": self.pending_skill_name,
                 "loaded": list(snapshot.diagnostics.loaded_skills),
+                "entries": [
+                    {
+                        "name": entry.name,
+                        "summary": entry.summary,
+                        "source": entry.source,
+                        "source_label": entry.source_label,
+                        "shadowed_sources": list(entry.shadowed_sources),
+                        "history_only": entry.history_only,
+                    }
+                    for entry in self.available_skills()
+                ],
+                "conflicts": [
+                    {
+                        "name": conflict.name,
+                        "winner_source": conflict.winner_source,
+                        "winner_source_label": conflict.winner_source_label,
+                        "shadowed_sources": list(conflict.shadowed_sources),
+                        "shadowed_source_labels": list(conflict.shadowed_source_labels),
+                    }
+                    for conflict in snapshot.diagnostics.skill_conflicts
+                ],
             },
             "templates": {
                 "available": self.runtime.list_template_names(),
@@ -604,50 +629,6 @@ class Agent:
             raise RuntimeError("Cannot continue from assistant message")
         return self._engine.run(publish_event=self._publish, on_event=on_event, raw_input=None)
 
-    def try_handle_extension_command(
-        self,
-        raw_input: str,
-        *,
-        on_event: EventCallback | None = None,
-    ) -> CoreCommandResult | None:
-        if raw_input.startswith("/skill:"):
-            remainder = raw_input[len("/skill:") :].strip()
-            if not remainder:
-                return None
-            name, _, request_text = remainder.partition(" ")
-            if not name:
-                return None
-            request_text = request_text.strip()
-            if request_text:
-                try:
-                    result = self.run_skill(name, request_text, raw_input, on_event=on_event)
-                except ValueError as exc:
-                    return CoreCommandResult(message=str(exc), error=str(exc), persist_state=False)
-                return CoreCommandResult(run_result=result, error=result.error, persist_state=True)
-            success, message = self.arm_skill(name, raw_input)
-            return CoreCommandResult(message=message, error=None if success else message, persist_state=False)
-
-        if raw_input.startswith("/template:"):
-            name = raw_input[len("/template:") :].strip()
-            if not name:
-                usage = "Usage: /template:<name> <request>"
-                return CoreCommandResult(message=usage, error=usage, persist_state=False)
-            name, _, request_text = name.partition(" ")
-            request_text = request_text.strip()
-            if not name or not request_text:
-                usage = "Usage: /template:<name> <request>"
-                return CoreCommandResult(message=usage, error=usage, persist_state=False)
-            try:
-                result = self.run_template(name, request_text, raw_input, on_event=on_event)
-            except ValueError as exc:
-                return CoreCommandResult(message=str(exc), error=str(exc), persist_state=False)
-            return CoreCommandResult(run_result=result, error=result.error, persist_state=True)
-
-        return None
-
-    def extension_command_usages(self) -> list[str]:
-        return list(self._EXTENSION_COMMAND_USAGES)
-
     def arm_skill(self, name: str, raw_command: str) -> tuple[bool, str]:
         skill, error = self._resolve_triggerable_skill(name)
         if skill is None:
@@ -684,6 +665,7 @@ class Agent:
             "skill_trigger": {
                 "name": skill.name,
                 "source": skill.source,
+                "source_label": skill.source_label,
                 "files": list(skill.files),
             },
         }
@@ -856,6 +838,10 @@ class Agent:
             when_to_use = entry.when_to_use or "Read when the task matches this skill or when the user explicitly requests it."
             lines.append(f"- {entry.name}: {entry.summary}")
             lines.append(f"  Use when: {when_to_use}")
+            if entry.source_label:
+                lines.append(f"  Source: {entry.source_label}")
+            if entry.shadowed_sources:
+                lines.append(f"  Shadowed definitions: {len(entry.shadowed_sources)}")
             lines.append(f"  Read in order: {files}")
         return "\n".join(lines)
 
@@ -877,6 +863,8 @@ class Agent:
                         when_to_use=entry.when_to_use,
                         files=list(entry.files),
                         source=entry.source,
+                        source_label=entry.source_label,
+                        shadowed_sources=list(entry.shadowed_sources),
                         history_only=True,
                     )
                 )
@@ -897,6 +885,8 @@ class Agent:
             when_to_use=skill.when_to_use,
             files=list(skill.files),
             source=skill.source,
+            source_label=skill.source_label,
+            shadowed_sources=list(skill.shadowed_sources),
             history_only=False,
         )
 

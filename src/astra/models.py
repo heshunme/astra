@@ -62,6 +62,7 @@ class ToolContext:
     timeout_seconds: int
     max_output_bytes: int
     read_max_lines: int
+    skill_file_aliases: dict[str, Path] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -86,6 +87,8 @@ class SkillCatalogEntry:
     when_to_use: str = ""
     files: list[str] = field(default_factory=list)
     source: str = ""
+    source_label: str = ""
+    shadowed_sources: list[str] = field(default_factory=list)
     history_only: bool = False
 
 
@@ -152,14 +155,6 @@ class AgentRunResult:
     error: str | None = None
 
 
-@dataclass(slots=True)
-class CoreCommandResult:
-    message: str | None = None
-    run_result: AgentRunResult | None = None
-    error: str | None = None
-    persist_state: bool = False
-
-
 def clone_tool_call(tool_call: ToolCall) -> ToolCall:
     return ToolCall(id=tool_call.id, name=tool_call.name, arguments=tool_call.arguments)
 
@@ -187,6 +182,8 @@ def clone_skill_catalog_entry(entry: SkillCatalogEntry) -> SkillCatalogEntry:
         when_to_use=entry.when_to_use,
         files=list(entry.files),
         source=entry.source,
+        source_label=entry.source_label,
+        shadowed_sources=list(entry.shadowed_sources),
         history_only=entry.history_only,
     )
 

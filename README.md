@@ -48,18 +48,20 @@ writable_roots = [
 Without those settings, commands such as `uv run python -m compileall src`, `uv run python -m astra --help`, or `uv pip install -e .` can fail with network, cache-lock, or read-only cache directory errors even when Astra itself is fine.
 
 ## Architecture
-The project is in a transition state, but the code now follows a three-layer shape:
+The project is in a transition state, but the code now follows a four-layer shape:
 
 - `core engine`
   - Owns conversation state, provider/tool orchestration, event emission, abort, and generic snapshot/restore mechanics
 - `coding-agent`
-  - Owns runtime reload application, prompt assembly, skill/template behavior, runtime inspection, and other coding-agent-specific policy
+  - Owns runtime reload application, prompt assembly, typed skill/template behavior, runtime inspection, and other coding-agent-specific policy
+- `application service`
+  - The exported `AstraApp` type owns config loading, session persistence, startup/restore orchestration, runtime/session commands, and `/reload code`
 - CLI
-  - Owns config loading, session persistence, terminal I/O, and slash-command parsing for interactive commands such as `/model`, `/base-url`, `/skills`, `/templates`, `/reload`, `/sessions`, `/skill:<name>`, and `/template:<name> <request>`
+  - Owns terminal I/O, signal handling, and slash-command parsing that translates interactive commands such as `/model`, `/base-url`, `/skills`, `/templates`, `/reload`, `/sessions`, `/skill:<name>`, and `/template:<name> <request>` into `AstraApp` typed calls
 
 Longer-term architecture direction, including core-engine goals and self-evolution layering, is documented in `docs/evolution_strategy.md`.
 
-The current non-CLI reusable entrypoint is still the exported `Agent` type, which now acts as the coding-agent service facade over the internal core engine.
+The current reusable non-CLI entrypoint is the exported `AstraApp` type. `Agent` remains the lower-level coding-agent facade over the internal core engine.
 
 For a current architecture survey in Chinese, see `docs/architecture.zh-CN.md`.
 
@@ -77,9 +79,10 @@ For a new conversation, the first normal user prompt becomes the default saved s
 Saved sessions persist both message history and the agent snapshot needed to restore runtime-only state for that session, including:
 
 - pending one-shot skill trigger
-- per-session runtime values such as `model`, `base_url`, and `system_prompt`
+- the full resolved runtime config for that session, including `model`, `base_url`, `system_prompt`, tool enablement and defaults, prompt order, and capability paths
 
-When you restore a session via `--session`, `/switch`, or `/resume`, Astra restores those snapshot values before continuing.
+When you restore a session via `--session`, `/switch`, or `/resume`, Astra reapplies that saved runtime snapshot before continuing. Use `/reload` when you explicitly want to switch back to the current env and YAML-derived runtime.
+Interactive commands such as `/model` and `/base-url` change only the current session runtime and any snapshots saved from it; they do not replace the env/YAML-derived baseline that `/reload` and `/reload code` restore.
 
 ## Reloadable config
 
@@ -129,8 +132,11 @@ Project prompt files:
 
 Project skills:
 
+- `~/.astra-python/skills/*/skill.yaml`
 - `.astra/skills/*/skill.yaml`
 - `.astra/skills/*/*.md`
+- `capabilities.skills.paths/*/skill.yaml`
+- `capabilities.skills.paths/*/*.md`
 
 Minimal `skill.yaml` example:
 
@@ -146,6 +152,16 @@ context_files:
 
 Skill files stay on disk until the model reads them with the `read` tool. Astra injects a generated skill catalog into the system prompt on every turn so the model knows which skills are available, what they are for, and which files to read on demand.
 
+Skill resources are exposed to the model as read-only virtual paths such as `skill://review/checklist.md`. The `read` tool resolves only the currently discovered skill aliases plus normal workspace-relative paths; it does not expose host absolute paths for global or extra-path skills.
+
+If multiple discovered skills share the same `name`, Astra resolves them with a fixed priority instead of silently using scan order:
+
+- project: `.astra/skills`
+- extra paths: `capabilities.skills.paths` in config order, where later paths override earlier paths
+- global: `~/.astra-python/skills`
+
+Duplicate names remain usable, but Astra emits runtime warnings and exposes the winner plus shadowed definitions through `/skills`, `/runtime`, and `/runtime json`.
+
 ## Runtime inspection
 
 Use runtime inspection commands to verify what the agent is currently using.
@@ -153,7 +169,7 @@ Use runtime inspection commands to verify what the agent is currently using.
 - `/tools`
   - Enabled tools and tool default limits (`read.max_lines`, bash timeout, bash output cap)
 - `/skills`
-  - Available skills for the current runtime, including each skill summary and optional `when_to_use` guidance
+  - Available skills for the current runtime, including summary, optional `when_to_use`, active source, and shadowed-definition count when there is a duplicate-name conflict
 - `/templates`
   - Available templates for the current runtime
 
@@ -213,7 +229,9 @@ This is the preferred way to check whether config, prompt files, and the generat
 
 Use `/resume` to interactively list saved sessions by number and reopen one without typing a session id. After resuming, Astra prints the effective runtime configuration for that session without replaying message history.
 
-Use `/skills` to inspect the currently usable skill catalog from the CLI. If skills are discovered but the `read` tool is disabled, Astra prints a note instead of advertising unusable `/skill:<name>` actions.
+Use `/skills` to inspect the currently usable skill catalog from the CLI. The listed files are `skill://...` aliases that can be passed to the `read` tool. If skills are discovered but the `read` tool is disabled, Astra prints a note instead of advertising unusable `/skill:<name>` actions.
+
+Use `/runtime json` when you need full duplicate-skill diagnostics. Skill source fields are exposed as virtual identifiers such as `skill://review`, not host absolute paths. The `skills.conflicts` array includes the winning source plus every shadowed source for each duplicated skill name.
 
 Use `/templates` to list discovered templates.
 

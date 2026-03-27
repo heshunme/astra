@@ -33,6 +33,8 @@ def _is_relative_to(path: Path, root: Path) -> bool:
 
 
 def resolve_workspace_path(workspace_root: Path, raw_path: str) -> Path:
+    if raw_path.startswith("skill://"):
+        raise ValueError(f"Skill files are read-only and must be accessed via the read tool: {raw_path}")
     candidate = Path(raw_path)
     if not candidate.is_absolute():
         candidate = workspace_root / candidate
@@ -41,6 +43,15 @@ def resolve_workspace_path(workspace_root: Path, raw_path: str) -> Path:
     if not _is_relative_to(resolved, root):
         raise ValueError(f"Path escapes workspace: {raw_path}")
     return resolved
+
+
+def resolve_readable_path(ctx: ToolContext, raw_path: str) -> Path:
+    if raw_path.startswith("skill://"):
+        path = ctx.skill_file_aliases.get(raw_path)
+        if path is None:
+            raise ValueError(f"Unknown skill file: {raw_path}")
+        return path
+    return resolve_workspace_path(ctx.workspace_root, raw_path)
 
 
 def truncate_tail(text: str, max_output_bytes: int) -> tuple[str, bool]:
@@ -57,7 +68,10 @@ def format_tool_result(result: ToolResult) -> str:
 
 
 def read_tool(args: dict, ctx: ToolContext) -> ToolResult:
-    path = resolve_workspace_path(ctx.workspace_root, args["path"])
+    try:
+        path = resolve_readable_path(ctx, args["path"])
+    except ValueError as exc:
+        return ToolResult(text=str(exc), is_error=True)
     if not path.exists():
         return ToolResult(text=f"File not found: {path}", is_error=True)
     if not path.is_file():

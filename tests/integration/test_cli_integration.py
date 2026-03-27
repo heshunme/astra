@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import builtins
+import importlib
 import io
 import sys
 import time
@@ -10,10 +11,8 @@ from pathlib import Path
 import pytest
 
 from astra import cli
-from astra.agent import Agent, AgentConfig
-from astra.models import CoreCommandResult, ProviderEvent
+from astra.models import ProviderEvent
 from astra.provider import OpenAICompatibleProvider
-from astra.runtime import CapabilityRuntime
 from astra.session import SessionStore
 
 
@@ -42,6 +41,10 @@ def _saved_session_files(home: Path) -> list[Path]:
 
 def _write_skill(cwd: Path, name: str, summary: str = "Review checklist", when_to_use: str | None = None) -> None:
     skill_dir = cwd / ".astra" / "skills" / name
+    _write_skill_dir(skill_dir, name=name, summary=summary, when_to_use=when_to_use)
+
+
+def _write_skill_dir(skill_dir: Path, *, name: str, summary: str = "Review checklist", when_to_use: str | None = None) -> None:
     skill_dir.mkdir(parents=True, exist_ok=True)
     lines = [
         f"name: {name}",
@@ -63,6 +66,12 @@ def _write_template(cwd: Path, name: str, body: str = "Template body") -> None:
     prompt_dir = cwd / ".astra" / "prompts"
     prompt_dir.mkdir(parents=True, exist_ok=True)
     (prompt_dir / f"{name}.md").write_text(body, encoding="utf-8")
+
+
+def _write_project_config(cwd: Path, body: str) -> None:
+    config_dir = cwd / ".astra"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "config.yaml").write_text(body.strip() + "\n", encoding="utf-8")
 
 
 def test_runtime_json_prompt_command(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -109,7 +118,34 @@ def test_skills_command_lists_available_skills_with_descriptions(
     assert "Skills" in out
     assert "- review: Review checklist" in out
     assert "Use when: Use for code review requests." in out
+    assert "Source: project (.astra/skills)" in out
     assert str(cwd / ".astra" / "skills" / "review" / "checklist.md") not in out
+
+
+def test_runtime_and_skills_commands_surface_skill_conflicts(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+
+    global_skill_dir = tmp_path / ".astra-python" / "skills" / "review"
+    _write_skill_dir(global_skill_dir, name="review", summary="Global review")
+    _write_skill(cwd, "review", summary="Project review")
+
+    monkeypatch.setattr(builtins, "input", InputFeeder(["/skills", "/runtime json", "/exit"]))
+    cli.main(["--cwd", str(cwd)])
+
+    out = capsys.readouterr().out
+    assert "- review: Project review" in out
+    assert "Source: project (.astra/skills)" in out
+    assert "Shadowed definitions: 1" in out
+    assert '"conflicts": [' in out
+    assert '"source": "skill://review"' in out
+    assert '"winner_source": "skill://review"' in out
+    assert '"winner_source_label": "project (.astra/skills)"' in out
+    assert '"shadowed_source_labels": [' in out
+    assert str(global_skill_dir / "skill.yaml") not in out
+    assert str(cwd / ".astra" / "skills" / "review" / "skill.yaml") not in out
 
 
 def test_skills_command_prints_empty_state_when_no_skills_exist(
@@ -276,6 +312,132 @@ def test_restored_session_preserves_session_base_url(
 
     out = capsys.readouterr().out
     assert "http://custom-gateway/v1" in out
+
+
+def test_restored_session_reapplies_full_runtime_snapshot(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+    extra_one = tmp_path / "extra-one"
+    extra_two = tmp_path / "extra-two"
+    _write_skill_dir(extra_one / "review", name="review", summary="Extra one review")
+    _write_skill_dir(extra_two / "review", name="review", summary="Extra two review")
+    _write_project_config(
+        cwd,
+        f"""
+tools:
+  enabled: [read, ls]
+  defaults:
+    read:
+      max_lines: 123
+prompts:
+  order:
+    - builtin:base
+capabilities:
+  skills:
+    paths:
+      - {extra_one}
+""",
+    )
+
+    def fake_stream_chat(self, _request):
+        yield ProviderEvent(type="text_delta", delta="ok")
+        yield ProviderEvent(type="done")
+
+    monkeypatch.setattr(OpenAICompatibleProvider, "stream_chat", fake_stream_chat)
+    monkeypatch.setattr(builtins, "input", InputFeeder(["hello", "/exit"]))
+    cli.main(["--cwd", str(cwd)])
+
+    _write_project_config(
+        cwd,
+        f"""
+tools:
+  enabled: [read, write, edit, ls, find, grep, bash]
+  defaults:
+    read:
+      max_lines: 999
+prompts:
+  order:
+    - builtin:base
+    - config:system
+capabilities:
+  skills:
+    paths:
+      - {extra_two}
+""",
+    )
+
+    saved_session = json.loads(_saved_session_files(tmp_path)[0].read_text(encoding="utf-8"))
+    monkeypatch.setattr(
+        builtins,
+        "input",
+        InputFeeder(["/runtime", "/tools", "/skills", "/reload", "/runtime", "/tools", "/skills", "/exit"]),
+    )
+    cli.main(["--cwd", str(cwd), "--session", saved_session["id"]])
+
+    out = capsys.readouterr().out
+    before_reload, after_reload = out.split("Reloaded runtime configuration.", 1)
+    assert "tools=read, ls" in before_reload
+    assert "Tools summary" in before_reload
+    assert "read.max_lines=123" in before_reload
+    assert "prompts.order=builtin:base" in before_reload
+    assert "- review: Extra one review" in before_reload
+    assert "tools=read, write, edit, ls, find, grep, bash" in after_reload
+    assert "Tools summary" in after_reload
+    assert "read.max_lines=999" in after_reload
+    assert "prompts.order=builtin:base, config:system" in after_reload
+    assert "- review: Extra two review" in after_reload
+
+
+def test_reload_commands_restore_config_baseline_after_resume(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+    _write_project_config(
+        cwd,
+        """
+model: baseline-model
+base_url: http://baseline-gateway/v1
+""",
+    )
+
+    def fake_stream_chat(self, _request):
+        yield ProviderEvent(type="text_delta", delta="ok")
+        yield ProviderEvent(type="done")
+
+    monkeypatch.setattr(OpenAICompatibleProvider, "stream_chat", fake_stream_chat)
+    monkeypatch.setattr(importlib, "reload", lambda module: module)
+    monkeypatch.setattr(
+        builtins,
+        "input",
+        InputFeeder(["/model saved-model", "/base-url http://saved-gateway/v1", "hello", "/exit"]),
+    )
+    cli.main(["--cwd", str(cwd)])
+
+    capsys.readouterr()
+    monkeypatch.setattr(
+        builtins,
+        "input",
+        InputFeeder(["/resume", "1", "/reload", "/reload code", "/exit"]),
+    )
+    cli.main(["--cwd", str(cwd)])
+
+    out = capsys.readouterr().out
+    first_restore, first_reload, second_reload = out.split("Reloaded runtime configuration.")
+    assert "Resumed hello" in first_restore
+    assert "model=saved-model" in first_restore
+    assert "base_url=http://saved-gateway/v1" in first_restore
+    assert "model=baseline-model" in first_reload
+    assert "base_url=http://baseline-gateway/v1" in first_reload
+    assert "model=saved-model" not in first_reload
+    assert "base_url=http://saved-gateway/v1" not in first_reload
+    assert "Code modules reloaded." in first_reload
+    assert "model=baseline-model" in second_reload
+    assert "base_url=http://baseline-gateway/v1" in second_reload
+    assert "model=saved-model" not in second_reload
+    assert "base_url=http://saved-gateway/v1" not in second_reload
 
 
 def test_switch_command(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -554,38 +716,6 @@ def test_inline_template_command_rewrites_prompt_and_persists_metadata(
     assert "Please follow the template instructions below for this turn only." in data["messages"][0]["content"]
 
 
-def test_cli_extension_commands_do_not_use_agent_string_dispatch(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    cwd = tmp_path / "workspace"
-    cwd.mkdir()
-    _write_template(cwd, "repo-rules")
-
-    def fake_stream_chat(self, _request):
-        yield ProviderEvent(type="text_delta", delta="ok")
-        yield ProviderEvent(type="done")
-
-    class NoStringDispatchAgent(Agent):
-        def try_handle_extension_command(self, raw_input: str, *, on_event=None):
-            raise AssertionError(f"CLI should not use try_handle_extension_command: {raw_input}")
-
-    def agent_factory(config: AgentConfig, runtime: CapabilityRuntime) -> Agent:
-        return NoStringDispatchAgent(config, runtime)
-
-    monkeypatch.setattr(OpenAICompatibleProvider, "stream_chat", fake_stream_chat)
-    monkeypatch.setattr(
-        builtins,
-        "input",
-        InputFeeder(["/template:repo-rules Review src/demo.py for issues.", "/templates", "/exit"]),
-    )
-    cli.main(["--cwd", str(cwd)], agent_factory=agent_factory)
-
-    out = capsys.readouterr().out
-    assert "ok" in out
-    assert "- repo-rules" in out
-    assert "(active)" not in out
-
-
 def test_template_command_does_not_consume_pending_skill(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -615,35 +745,6 @@ def test_template_command_does_not_consume_pending_skill(
     assert len(requests) == 1
     assert "Please use the skill 'review' for this turn only." not in str(requests[0].messages[1]["content"])
     assert "Please follow the template instructions below for this turn only." in str(requests[0].messages[1]["content"])
-
-
-def test_cli_falls_back_to_custom_agent_extension_commands(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    cwd = tmp_path / "workspace"
-    cwd.mkdir()
-
-    class CustomExtensionAgent(Agent):
-        def extension_command_usages(self) -> list[str]:
-            return super().extension_command_usages() + ["/foo"]
-
-        def try_handle_extension_command(self, raw_input: str, *, on_event=None):
-            if raw_input == "/foo":
-                return CoreCommandResult(message="custom foo handled", persist_state=False)
-            return super().try_handle_extension_command(raw_input, on_event=on_event)
-
-        def prompt(self, text: str, *, metadata=None, raw_input=None, on_event=None):
-            raise AssertionError(f"custom extension should not fall through to prompt: {text}")
-
-    def agent_factory(config: AgentConfig, runtime: CapabilityRuntime) -> Agent:
-        return CustomExtensionAgent(config, runtime)
-
-    monkeypatch.setattr(builtins, "input", InputFeeder(["/help", "/foo", "/exit"]))
-    cli.main(["--cwd", str(cwd)], agent_factory=agent_factory)
-
-    out = capsys.readouterr().out
-    assert "/foo" in out
-    assert "custom foo handled" in out
 
 
 def test_bare_skill_command_arms_next_prompt_once(
