@@ -182,12 +182,12 @@ python -m astra --cwd <temp-workspace>
 /runtime prompt
 /runtime json prompt
 /model
-/model smoke-model
 /skill:review
 /skill:debug
 /template:pairing Summarize docs/plan.md in one sentence.
 /runtime prompt
 /runtime json prompt
+/model smoke-model
 /base-url
 /base-url http://gateway.local/v1
 /sessions
@@ -202,11 +202,12 @@ python -m astra --cwd <temp-workspace>
 
 重点观察：
 
-- `/template:<name> <request>` 最好放在修改 `/base-url` 之前验证；否则如果故意把 `base_url` 指到不可达地址，只能看到请求失败，测不到 template 一次性改写语义
+- `/template:<name> <request>` 最好放在修改 `/base-url` 或切到占位 smoke model 之前验证；否则如果故意把 `base_url` 指到不可达地址，或者把 `model` 设成 provider 不认识的测试值，就只能看到请求失败，测不到 template 一次性改写语义
 - `/runtime prompt` 是否准确反映默认 prompt 和生成的 skill catalog；`/template:<name> <request>` 不应把 template 变成新的 system prompt fragment
 - `/runtime json prompt` 是否与 `/runtime prompt` 的内容一致，只是以机器可读形式输出
 - `/skill:<name>` 是否保持 inert 直到显式触发，skill 文件是否以 `skill://...` 别名暴露给 `read`
 - `/template:<name> <request>` 是否只改写这一轮 user message，而不是创建持久 template 状态
+- `/model smoke-model` 更适合作为 setter smoke，验证完后如果还要继续做真实请求，应切回 provider 可用模型
 - `/resume`/`/switch` 是否先恢复保存时的完整 runtime snapshot；随后 `/reload` 是否切回当前 env/YAML runtime
 - `/runtime json` 在有重复 skill 名称时是否能看到 `skills.conflicts`
 - `fork`、`rename`、`save`、`switch`、`resume` 是否真的落盘并能恢复

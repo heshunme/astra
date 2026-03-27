@@ -37,12 +37,12 @@ Run the commands in this order unless the user explicitly wants a scoped subset:
 /runtime prompt
 /runtime json prompt
 /model
-/model smoke-model
 /skill:review
 /skill:debug
 /template:pairing Summarize docs/plan.md in one sentence.
 /runtime prompt
 /runtime json prompt
+/model smoke-model
 /base-url
 /base-url http://gateway.local/v1
 /sessions
@@ -77,18 +77,18 @@ Run the commands in this order unless the user explicitly wants a scoped subset:
   Expect a JSON payload that includes `prompt`, `fragment_count`, and assembled prompt metadata.
 - `/model`
   Expect the current model value.
-- `/model smoke-model`
-  Expect `Model set to smoke-model`.
 - `/skill:review`
   Expect a one-shot pending skill message.
 - `/skill:debug`
   Expect a one-shot pending skill message that replaces the prior pending skill.
 - `/template:pairing Summarize docs/plan.md in one sentence.`
-  Expect an immediate one-turn request rewrite and model execution. Run this before changing `base_url` so template semantics are not masked by an intentionally unreachable gateway.
+  Expect an immediate one-turn request rewrite and model execution. Run this before changing `base_url` or switching to a placeholder smoke model so template semantics are not masked by an intentionally unreachable gateway or invalid provider model.
 - `/runtime prompt` after `/template:pairing ...`
   Expect no new `prompt:pairing` fragment in the assembled system prompt. Prompt inspection should remain aligned with the actual provider system prompt.
 - `/runtime json prompt` after `/template:pairing ...`
   Expect the same prompt payload as `/runtime prompt`, with no template-only fragment added.
+- `/model smoke-model`
+  Expect `Model set to smoke-model`. Treat this as a setter smoke check only; switch to a provider-valid model before any step that must execute a real request.
 - `/base-url`
   Expect the current base URL.
 - `/base-url http://gateway.local/v1`
