@@ -3,9 +3,10 @@ from __future__ import annotations
 import builtins
 import importlib
 import io
+import json
+import os
 import sys
 import time
-import json
 from pathlib import Path
 
 import pytest
@@ -105,6 +106,38 @@ def test_provider_qualified_model_does_not_require_openai_api_key(
     cli.main(["--cwd", str(cwd), "--model", "ollama/llama3.2"])
 
     out = capsys.readouterr().out
+    assert "ok" in out
+
+
+def test_project_dotenv_provider_vars_reach_litellm_requests(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+    (cwd / ".env").write_text("ANTHROPIC_API_KEY=project-anthropic\n", encoding="utf-8")
+    captured_env: dict[str, str | None] = {}
+
+    def fake_completion(**_kwargs):
+        captured_env["anthropic"] = os.environ.get("ANTHROPIC_API_KEY")
+        yield {
+            "choices": [
+                {
+                    "delta": {"content": "ok"},
+                    "finish_reason": "stop",
+                }
+            ]
+        }
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr("astra.provider.litellm.completion", fake_completion)
+    monkeypatch.setattr(builtins, "input", InputFeeder(["hello", "/exit"]))
+
+    cli.main(["--cwd", str(cwd), "--model", "anthropic/claude-sonnet-4-5"])
+
+    out = capsys.readouterr().out
+    assert captured_env["anthropic"] == "project-anthropic"
+    assert "ANTHROPIC_API_KEY" not in os.environ
     assert "ok" in out
 
 

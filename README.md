@@ -19,7 +19,7 @@ This repository contains a Python coding-agent runtime that is moving toward a r
 - `litellm==1.82.6` is installed with the package
 - Provider credentials via LiteLLM-supported environment variables
 - Optional: `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`
-- Optional project `.env` file (for `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`, or other LiteLLM provider vars)
+- Optional project `.env` file (for `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`, or other LiteLLM provider vars used during LiteLLM requests)
 
 Use provider-qualified model names when possible, for example `openai/gpt-5`, `anthropic/claude-sonnet-4-5`, or `ollama/llama3.2`. Unqualified names such as `gpt-5.2` are still accepted and are treated as `openai/gpt-5.2`.
 
@@ -84,7 +84,7 @@ Saved sessions persist both message history and the agent snapshot needed to res
 - pending one-shot skill trigger
 - the full resolved runtime config for that session, including `model`, `base_url`, `system_prompt`, tool enablement and defaults, prompt order, and capability paths
 
-When you restore a session via `--session`, `/switch`, or `/resume`, Astra reapplies that saved runtime snapshot before continuing. Use `/reload` when you explicitly want to switch back to the current env and YAML-derived runtime.
+When you restore a session via `--session`, `/switch`, or `/resume`, Astra reapplies that saved runtime snapshot before continuing and re-reads the restored session's workspace `.env` and project YAML for request-time provider credentials and config fallback. Use `/reload` when you explicitly want to refresh from the current session workspace's env and YAML-derived runtime.
 Interactive commands such as `/model` and `/base-url` change only the current session runtime and any snapshots saved from it; they do not replace the env/YAML-derived baseline that `/reload` and `/reload code` restore.
 
 ## Reloadable config
@@ -97,6 +97,8 @@ Reloadable config is read from:
 Project config overrides global config. Apply changes with `/reload`.
 
 Environment variables are also loaded from `<cwd>/.env` (if present). Values already set in the process environment take precedence over `.env`.
+These merged values are used for LiteLLM requests, including non-OpenAI provider credentials such as `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, or `AZURE_*`.
+Project `.env` values are not exported to bash or other tool subprocesses.
 
 Example:
 

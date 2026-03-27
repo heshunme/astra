@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic, sleep
-from typing import Callable
+from typing import Callable, Mapping
 
 from .config import ReloadResult, ResolvedRuntimeConfig, clone_resolved_runtime_config
 from .models import (
@@ -43,6 +43,7 @@ class AgentConfig:
     model: str
     api_key: str | None
     base_url: str
+    runtime_env: Mapping[str, str]
     cwd: Path
     system_prompt: str
 
@@ -205,6 +206,7 @@ class _CoreEngine:
                     tools=self._build_provider_tools(),
                     api_key=self.config.api_key,
                     base_url=self.config.base_url,
+                    runtime_env=dict(self.config.runtime_env),
                 )
                 assistant_text_parts: list[str] = []
                 tool_call_parts: dict[int, dict[str, str]] = {}

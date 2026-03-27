@@ -285,6 +285,41 @@ def test_app_startup_allows_missing_api_key(tmp_path: Path) -> None:
     assert app.api_key is None
 
 
+def test_app_startup_merges_project_dotenv_into_agent_runtime_env(tmp_path: Path) -> None:
+    app, _store = _make_app(tmp_path, env={"PATH": "/usr/bin"})
+    (tmp_path / "workspace" / ".env").write_text(
+        "OPENAI_API_KEY=dotenv-openai\nANTHROPIC_API_KEY=dotenv-anthropic\n",
+        encoding="utf-8",
+    )
+
+    app.startup()
+
+    assert app.api_key == "dotenv-openai"
+    assert app.runtime_env["ANTHROPIC_API_KEY"] == "dotenv-anthropic"
+    assert app.agent.config.runtime_env["ANTHROPIC_API_KEY"] == "dotenv-anthropic"
+
+
+def test_app_startup_prefers_process_env_over_project_dotenv(tmp_path: Path) -> None:
+    app, _store = _make_app(
+        tmp_path,
+        env={
+            "OPENAI_API_KEY": "shell-openai",
+            "ANTHROPIC_API_KEY": "shell-anthropic",
+        },
+    )
+    (tmp_path / "workspace" / ".env").write_text(
+        "OPENAI_API_KEY=dotenv-openai\nANTHROPIC_API_KEY=dotenv-anthropic\n",
+        encoding="utf-8",
+    )
+
+    app.startup()
+
+    assert app.api_key == "shell-openai"
+    assert app.runtime_env["ANTHROPIC_API_KEY"] == "shell-anthropic"
+    assert app.agent.config.runtime_env["OPENAI_API_KEY"] == "shell-openai"
+    assert app.agent.config.runtime_env["ANTHROPIC_API_KEY"] == "shell-anthropic"
+
+
 def test_submit_prompt_materializes_session_and_sets_default_name(tmp_path: Path) -> None:
     app, store = _make_app(tmp_path)
     app.startup()
@@ -363,6 +398,53 @@ def test_reload_runtime_merges_config_and_runtime_warnings_and_persists_saved_se
     assert store.saved_ids == ["session-1"]
 
 
+def test_reload_runtime_refreshes_runtime_env_from_project_dotenv(tmp_path: Path) -> None:
+    app, _store = _make_app(tmp_path, env={"PATH": "/usr/bin"})
+    env_file = tmp_path / "workspace" / ".env"
+    env_file.write_text("ANTHROPIC_API_KEY=first-key\n", encoding="utf-8")
+    app.startup()
+
+    env_file.write_text("ANTHROPIC_API_KEY=second-key\n", encoding="utf-8")
+    result = app.reload_runtime()
+
+    assert result.success is True
+    assert app.runtime_env["ANTHROPIC_API_KEY"] == "second-key"
+    assert app.agent.config.runtime_env["ANTHROPIC_API_KEY"] == "second-key"
+
+
+def test_reload_runtime_uses_restored_session_cwd_for_project_dotenv(tmp_path: Path) -> None:
+    app, store = _make_app(tmp_path, env={"PATH": "/usr/bin"})
+    workspace_env = tmp_path / "workspace" / ".env"
+    other_cwd = (tmp_path / "other").resolve()
+    other_cwd.mkdir()
+    other_env = other_cwd / ".env"
+    workspace_env.write_text("ANTHROPIC_API_KEY=workspace-key\n", encoding="utf-8")
+    other_env.write_text("ANTHROPIC_API_KEY=other-key\n", encoding="utf-8")
+    app.startup()
+
+    session = store.create(cwd=str(other_cwd), model="saved-model", system_prompt="saved-prompt", name="saved")
+    session.agent_snapshot = AgentSnapshot(
+        conversation=AgentConversationState(messages=[Message(role="user", content="saved")]),
+        runtime=AgentRuntimeState(
+            cwd=str(other_cwd),
+            runtime_config=_runtime_config(
+                SimpleNamespace(model="saved-model", base_url="http://saved/v1", system_prompt="saved-prompt")
+            ),
+        ),
+    )
+    store.save(session)
+
+    app.switch_session(session.id)
+    other_env.write_text("ANTHROPIC_API_KEY=other-key-updated\n", encoding="utf-8")
+
+    result = app.reload_runtime()
+
+    assert result.success is True
+    assert app.current_cwd() == other_cwd
+    assert app.runtime_env["ANTHROPIC_API_KEY"] == "other-key-updated"
+    assert app.agent.config.runtime_env["ANTHROPIC_API_KEY"] == "other-key-updated"
+
+
 def test_switch_and_resume_restore_saved_session(tmp_path: Path) -> None:
     app, store = _make_app(tmp_path)
     app.startup()
@@ -380,6 +462,72 @@ def test_switch_and_resume_restore_saved_session(tmp_path: Path) -> None:
     assert resume_result.message == f"Resumed saved ({session.id})"
     assert len(app.agent.restore_calls) == 2
     assert len(app.agent.apply_calls) == 3
+
+
+def test_switch_and_resume_refresh_runtime_env_from_restored_session_cwd(tmp_path: Path) -> None:
+    app, store = _make_app(tmp_path, env={"PATH": "/usr/bin"})
+    workspace_env = tmp_path / "workspace" / ".env"
+    other_cwd = (tmp_path / "other").resolve()
+    other_cwd.mkdir()
+    other_env = other_cwd / ".env"
+    workspace_env.write_text("ANTHROPIC_API_KEY=workspace-key\n", encoding="utf-8")
+    other_env.write_text("ANTHROPIC_API_KEY=other-key\n", encoding="utf-8")
+    app.startup()
+
+    session = store.create(cwd=str(other_cwd), model="saved-model", system_prompt="saved-prompt", name="saved")
+    session.agent_snapshot = AgentSnapshot(
+        conversation=AgentConversationState(messages=[Message(role="user", content="saved")]),
+        runtime=AgentRuntimeState(
+            cwd=str(other_cwd),
+            runtime_config=_runtime_config(
+                SimpleNamespace(model="saved-model", base_url="http://saved/v1", system_prompt="saved-prompt")
+            ),
+        ),
+    )
+    store.save(session)
+
+    switch_result = app.switch_session(session.id)
+
+    assert switch_result.message == f"Switched to {session.id}"
+    assert app.current_cwd() == other_cwd
+    assert app.runtime_env["ANTHROPIC_API_KEY"] == "other-key"
+    assert app.agent.config.runtime_env["ANTHROPIC_API_KEY"] == "other-key"
+
+    workspace_env.write_text("ANTHROPIC_API_KEY=workspace-updated\n", encoding="utf-8")
+    other_env.write_text("ANTHROPIC_API_KEY=other-key-updated\n", encoding="utf-8")
+    resume_result = app.resume_session(session.id)
+
+    assert resume_result.message == f"Resumed saved ({session.id})"
+    assert app.runtime_env["ANTHROPIC_API_KEY"] == "other-key-updated"
+    assert app.agent.config.runtime_env["ANTHROPIC_API_KEY"] == "other-key-updated"
+
+
+def test_startup_restore_refreshes_runtime_env_from_session_cwd(tmp_path: Path) -> None:
+    app, store = _make_app(tmp_path, env={"PATH": "/usr/bin"}, session_id="session-1")
+    workspace_env = tmp_path / "workspace" / ".env"
+    other_cwd = (tmp_path / "other").resolve()
+    other_cwd.mkdir()
+    workspace_env.write_text("ANTHROPIC_API_KEY=workspace-key\n", encoding="utf-8")
+    (other_cwd / ".env").write_text("ANTHROPIC_API_KEY=other-key\n", encoding="utf-8")
+
+    session = store.create(cwd=str(other_cwd), model="saved-model", system_prompt="saved-prompt", name="saved")
+    session.agent_snapshot = AgentSnapshot(
+        conversation=AgentConversationState(messages=[Message(role="user", content="saved")]),
+        runtime=AgentRuntimeState(
+            cwd=str(other_cwd),
+            runtime_config=_runtime_config(
+                SimpleNamespace(model="saved-model", base_url="http://saved/v1", system_prompt="saved-prompt")
+            ),
+        ),
+    )
+    store.save(session)
+
+    result = app.startup()
+
+    assert result.message == "Started application."
+    assert app.current_cwd() == other_cwd
+    assert app.runtime_env["ANTHROPIC_API_KEY"] == "other-key"
+    assert app.agent.config.runtime_env["ANTHROPIC_API_KEY"] == "other-key"
 
 
 def test_fork_rename_and_save_require_materialized_session(tmp_path: Path) -> None:

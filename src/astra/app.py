@@ -141,13 +141,14 @@ class AstraApp:
         self.session_state: AppSessionState | None = None
 
     def startup(self) -> AppActionResult:
-        runtime_config, warnings = self._load_runtime_config()
+        runtime_config, warnings = self._load_runtime_config(self.cwd)
         self.capability_runtime = self._runtime_factory(self.cwd)
         self.agent = self._agent_factory(
             AgentConfig(
                 model=runtime_config.model,
                 api_key=self.api_key,
                 base_url=runtime_config.base_url,
+                runtime_env=dict(self.runtime_env),
                 cwd=self.cwd,
                 system_prompt=runtime_config.system_prompt,
             ),
@@ -259,9 +260,11 @@ class AstraApp:
         return self._require_agent().prompt_fragment_text(key)
 
     def reload_runtime(self) -> ReloadResult:
-        runtime_config, warnings = self._load_runtime_config()
+        target_cwd = self.current_cwd()
+        runtime_config, warnings = self._load_runtime_config(target_cwd)
         agent = self._require_agent()
-        agent.config.api_key = self.api_key
+        self.cwd = target_cwd
+        self._apply_runtime_env_to_agent(agent)
         result = agent.apply_runtime_config(runtime_config)
         combined_warnings = list(warnings)
         combined_warnings.extend(result.warnings)
@@ -322,6 +325,7 @@ class AstraApp:
                 model=restored_snapshot.runtime.runtime_config.model,
                 api_key=self.api_key,
                 base_url=restored_snapshot.runtime.runtime_config.base_url,
+                runtime_env=dict(self.runtime_env),
                 cwd=restored_cwd,
                 system_prompt=restored_snapshot.runtime.runtime_config.system_prompt,
             ),
@@ -416,17 +420,18 @@ class AstraApp:
         self._persist_agent_state()
         return AppActionResult(message=f"Saved {session_state.session.id}", persisted=True)
 
-    def _load_runtime_config(self) -> tuple[ResolvedRuntimeConfig, list[str]]:
+    def _load_runtime_config(self, cwd: Path) -> tuple[ResolvedRuntimeConfig, list[str]]:
         warnings: list[str] = []
+        resolved_cwd = cwd.resolve()
         try:
-            env_map = merged_env(self.cwd, env=self._env_provider())
+            env_map = merged_env(resolved_cwd, env=self._env_provider())
         except DotenvError as exc:
             warnings.append(str(exc))
             env_map = dict(self._env_provider())
         self.runtime_env = dict(env_map)
         self.api_key = self.runtime_env.get("OPENAI_API_KEY")
         try:
-            raw_config = self.config_manager.load(self.cwd)
+            raw_config = self.config_manager.load(resolved_cwd)
         except ConfigError as exc:
             warnings.append(str(exc))
             raw_config = RuntimeConfig()
@@ -438,6 +443,10 @@ class AstraApp:
             env=self.runtime_env,
         )
         return resolved, warnings
+
+    def _apply_runtime_env_to_agent(self, agent: Agent) -> None:
+        agent.config.api_key = self.api_key
+        agent.config.runtime_env = dict(self.runtime_env)
 
     def _persist_agent_state(self, create_if_needed: bool = False) -> bool:
         session_state = self._require_session_state()
@@ -454,16 +463,27 @@ class AstraApp:
     def _restore_session(self, session: Session) -> AppActionResult:
         agent = self._require_agent()
         session_state = self._require_session_state()
-        snapshot = session_to_agent_snapshot(session, agent.runtime_config)
+        snapshot_cwd = session.cwd
+        if session.agent_snapshot is not None and session.agent_snapshot.runtime.cwd:
+            snapshot_cwd = session.agent_snapshot.runtime.cwd
+        restored_cwd = Path(snapshot_cwd).resolve()
+        restored_runtime_config, warnings = self._load_runtime_config(restored_cwd)
+        snapshot = session_to_agent_snapshot(session, restored_runtime_config)
+        snapshot.runtime.cwd = str(restored_cwd)
         agent.restore(snapshot)
+        self.cwd = restored_cwd
+        self.capability_runtime = agent.runtime
+        self._apply_runtime_env_to_agent(agent)
         resumed_runtime = clone_resolved_runtime_config(snapshot.runtime.runtime_config)
         result = agent.apply_runtime_config(resumed_runtime)
+        combined_warnings = list(warnings)
+        combined_warnings.extend(result.warnings)
         if not result.success:
             message = f"Failed to restore session: {result.message}"
-            return AppActionResult(message=message, warnings=list(result.warnings), error=message)
+            return AppActionResult(message=message, warnings=combined_warnings, error=message)
         session_state.session = session
         session_state.materialized = True
-        return AppActionResult(message=f"Restored {session.id}", warnings=list(result.warnings))
+        return AppActionResult(message=f"Restored {session.id}", warnings=combined_warnings)
 
     def _set_default_session_name(self, text: str) -> None:
         session_state = self._require_session_state()

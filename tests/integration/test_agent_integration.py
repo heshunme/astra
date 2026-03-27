@@ -50,6 +50,7 @@ def _build_agent(cwd: Path, runtime_config) -> Agent:
             model=runtime_config.model,
             api_key="test-key",
             base_url=runtime_config.base_url,
+            runtime_env={"OPENAI_API_KEY": "test-key"},
             cwd=cwd,
             system_prompt=runtime_config.system_prompt,
         ),

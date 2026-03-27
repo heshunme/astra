@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Iterator
+from typing import Any, Iterator, Mapping
 
 import litellm
 
@@ -23,6 +25,7 @@ class ProviderRequest:
     tools: list[dict[str, Any]]
     api_key: str | None
     base_url: str
+    runtime_env: Mapping[str, str]
     temperature: float = 0.0
 
 
@@ -68,6 +71,22 @@ def _looks_like_abort(exc: BaseException) -> bool:
     return any(marker in name or marker in message for marker in abort_markers)
 
 
+@contextmanager
+def _temporary_env_overlay(env: Mapping[str, str]) -> Iterator[None]:
+    previous: dict[str, str | None] = {}
+    for key, value in env.items():
+        previous[key] = os.environ.get(key)
+        os.environ[key] = value
+    try:
+        yield
+    finally:
+        for key, prior in previous.items():
+            if prior is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = prior
+
+
 class OpenAICompatibleProvider:
     def __init__(self, base_url: str):
         self.base_url = base_url.rstrip("/")
@@ -109,38 +128,39 @@ class OpenAICompatibleProvider:
 
     def stream_chat(self, request: ProviderRequest) -> Iterator[ProviderEvent]:
         try:
-            stream = self._stream_chunks(request)
-            self._active_stream = stream
-            done_emitted = False
-            for chunk in stream:
-                usage = self._usage_from_chunk(chunk)
-                if usage:
-                    yield ProviderEvent(type="usage", usage=usage)
+            with _temporary_env_overlay(request.runtime_env):
+                stream = self._stream_chunks(request)
+                self._active_stream = stream
+                done_emitted = False
+                for chunk in stream:
+                    usage = self._usage_from_chunk(chunk)
+                    if usage:
+                        yield ProviderEvent(type="usage", usage=usage)
 
-                choices = _coerce_list(_get_value(chunk, "choices"))
-                if not choices:
-                    continue
+                    choices = _coerce_list(_get_value(chunk, "choices"))
+                    if not choices:
+                        continue
 
-                delta = _get_value(choices[0], "delta")
-                content = _get_value(delta, "content")
-                if isinstance(content, str) and content:
-                    yield ProviderEvent(type="text_delta", delta=content)
+                    delta = _get_value(choices[0], "delta")
+                    content = _get_value(delta, "content")
+                    if isinstance(content, str) and content:
+                        yield ProviderEvent(type="text_delta", delta=content)
 
-                for tool_call in _coerce_list(_get_value(delta, "tool_calls")):
-                    function = _get_value(tool_call, "function")
-                    yield ProviderEvent(
-                        type="tool_call_delta",
-                        index=_get_value(tool_call, "index"),
-                        tool_call_id=_get_value(tool_call, "id"),
-                        tool_name=_get_value(function, "name"),
-                        tool_arguments_delta=_get_value(function, "arguments", "") or "",
-                    )
+                    for tool_call in _coerce_list(_get_value(delta, "tool_calls")):
+                        function = _get_value(tool_call, "function")
+                        yield ProviderEvent(
+                            type="tool_call_delta",
+                            index=_get_value(tool_call, "index"),
+                            tool_call_id=_get_value(tool_call, "id"),
+                            tool_name=_get_value(function, "name"),
+                            tool_arguments_delta=_get_value(function, "arguments", "") or "",
+                        )
 
-                finish_reason = _get_value(choices[0], "finish_reason")
-                if finish_reason in {"stop", "tool_calls"}:
-                    yield ProviderEvent(type="done")
-                    done_emitted = True
-                    break
+                    finish_reason = _get_value(choices[0], "finish_reason")
+                    if finish_reason in {"stop", "tool_calls"}:
+                        yield ProviderEvent(type="done")
+                        done_emitted = True
+                        break
         except Exception as exc:
             if _looks_like_abort(exc):
                 raise ProviderAborted("Provider stream aborted") from exc

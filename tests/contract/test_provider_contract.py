@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -75,6 +76,7 @@ def test_provider_translates_litellm_stream_and_normalizes_model(monkeypatch: py
         tools=[{"type": "function", "function": {"name": "read"}}],
         api_key="test-key",
         base_url=provider.base_url,
+        runtime_env={"OPENAI_API_KEY": "test-key"},
     )
 
     events = list(provider.stream_chat(request))
@@ -117,6 +119,7 @@ def test_provider_passes_provider_qualified_models_through(monkeypatch: pytest.M
         tools=[],
         api_key=None,
         base_url=provider.base_url,
+        runtime_env={},
     )
 
     list(provider.stream_chat(request))
@@ -128,6 +131,52 @@ def test_provider_passes_provider_qualified_models_through(monkeypatch: pytest.M
     assert "tool_choice" not in captured_kwargs
 
 
+def test_provider_overlays_runtime_env_for_litellm_and_restores_process_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_env: dict[str, str | None] = {}
+
+    def fake_completion(**_kwargs):
+        captured_env["anthropic"] = os.environ.get("ANTHROPIC_API_KEY")
+        captured_env["gemini"] = os.environ.get("GEMINI_API_KEY")
+        return _ClosableStream(
+            [
+                {
+                    "choices": [
+                        {
+                            "delta": {"content": "ok"},
+                            "finish_reason": "stop",
+                        }
+                    ]
+                }
+            ]
+        )
+
+    monkeypatch.setattr("astra.provider.litellm.completion", fake_completion)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "shell-anthropic")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+    provider = OpenAICompatibleProvider("http://127.0.0.1:4000/v1")
+    request = ProviderRequest(
+        model="anthropic/claude-sonnet-4-5",
+        messages=[],
+        tools=[],
+        api_key=None,
+        base_url=provider.base_url,
+        runtime_env={
+            "ANTHROPIC_API_KEY": "dotenv-anthropic",
+            "GEMINI_API_KEY": "dotenv-gemini",
+        },
+    )
+
+    list(provider.stream_chat(request))
+
+    assert captured_env["anthropic"] == "dotenv-anthropic"
+    assert captured_env["gemini"] == "dotenv-gemini"
+    assert os.environ.get("ANTHROPIC_API_KEY") == "shell-anthropic"
+    assert "GEMINI_API_KEY" not in os.environ
+
+
 def test_provider_maps_litellm_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_completion(**_kwargs):
         raise RuntimeError("boom")
@@ -135,7 +184,14 @@ def test_provider_maps_litellm_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("astra.provider.litellm.completion", fake_completion)
 
     provider = OpenAICompatibleProvider("http://127.0.0.1:4000/v1")
-    request = ProviderRequest(model="gpt-5.2", messages=[], tools=[], api_key="k", base_url=provider.base_url)
+    request = ProviderRequest(
+        model="gpt-5.2",
+        messages=[],
+        tools=[],
+        api_key="k",
+        base_url=provider.base_url,
+        runtime_env={"OPENAI_API_KEY": "k"},
+    )
 
     with pytest.raises(ProviderError, match="boom"):
         list(provider.stream_chat(request))
@@ -148,7 +204,14 @@ def test_provider_maps_abort_like_errors(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr("astra.provider.litellm.completion", fake_completion)
 
     provider = OpenAICompatibleProvider("http://127.0.0.1:4000/v1")
-    request = ProviderRequest(model="gpt-5.2", messages=[], tools=[], api_key="k", base_url=provider.base_url)
+    request = ProviderRequest(
+        model="gpt-5.2",
+        messages=[],
+        tools=[],
+        api_key="k",
+        base_url=provider.base_url,
+        runtime_env={"OPENAI_API_KEY": "k"},
+    )
 
     with pytest.raises(ProviderAborted, match="Provider stream aborted"):
         list(provider.stream_chat(request))
