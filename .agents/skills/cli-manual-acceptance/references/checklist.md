@@ -19,8 +19,11 @@ Notes:
 - Prefer `.venv/bin/python` for the interactive session. Bare system `python` may fail with missing editable-install dependencies such as `yaml`.
 - Prefer `.venv/bin/python` for the non-interactive prechecks as well so the whole manual acceptance flow uses a single interpreter baseline.
 - Capture the `temp_root` and `workspace` paths printed by `.venv/bin/python scripts/manual_cli.py --no-launch`; they are needed for the interactive launch.
+- In Codex sandboxed environments, run the interactive CLI launch outside the sandbox or via escalation approval. Network-restricted sandboxes can block the live provider path and produce misleading template/request failures.
 - Do not export `OPENAI_API_KEY` in the shell, otherwise the environment will override `.env` and the live-provider step may fail with 401.
 - Feed slash commands in small batches so the first mismatch is attributable.
+- Treat `/resume` and `/switch` as interactive pause points. Do not queue more commands behind them until the numbered selection prompt has been satisfied.
+- A warning emitted by a provider SDK during `--help` is not by itself a CLI regression if help text still renders and the process exits successfully.
 
 ## Command Order
 
@@ -46,12 +49,22 @@ Run the commands in this order unless the user explicitly wants a scoped subset:
 /base-url
 /base-url http://gateway.local/v1
 /sessions
-/resume
 /fork smoke-copy
 /rename smoke-main
 /save
 /reload
 /reload code
+/exit
+```
+
+Then relaunch the CLI in the same disposable workspace and run this second batch to validate restore behavior on a fresh process:
+
+```text
+/sessions
+/resume
+<select the saved session number>
+/runtime
+/switch <session-id>
 /exit
 ```
 
@@ -82,7 +95,7 @@ Run the commands in this order unless the user explicitly wants a scoped subset:
 - `/skill:debug`
   Expect a one-shot pending skill message that replaces the prior pending skill.
 - `/template:pairing Summarize docs/plan.md in one sentence.`
-  Expect an immediate one-turn request rewrite and model execution. Run this before changing `base_url` or switching to a placeholder smoke model so template semantics are not masked by an intentionally unreachable gateway or invalid provider model.
+  Expect an immediate one-turn request rewrite and model execution. Confirm that this step issues a real request, not just a local acknowledgement. Run this before changing `base_url` or switching to a placeholder smoke model so template semantics are not masked by an intentionally unreachable gateway or invalid provider model.
 - `/runtime prompt` after `/template:pairing ...`
   Expect no new `prompt:pairing` fragment in the assembled system prompt. Prompt inspection should remain aligned with the actual provider system prompt.
 - `/runtime json prompt` after `/template:pairing ...`
@@ -94,9 +107,7 @@ Run the commands in this order unless the user explicitly wants a scoped subset:
 - `/base-url http://gateway.local/v1`
   Expect `Base URL set to http://gateway.local/v1`.
 - `/sessions`
-  Expect either no saved sessions or a session table. Before a normal user prompt, slash commands alone should not materialize a new session.
-- `/resume`
-  Expect a numbered list for the current cwd only, then a restored session summary after selection. The resumed runtime should reflect the saved session snapshot first, not the current YAML/env state.
+  In the first CLI process, expect the current materialized session after the template-backed request completes. Before any normal user prompt or template-backed request, slash commands alone should not materialize a new session.
 - `/fork smoke-copy`
   Expect either `No saved session to fork.` or a new fork id once a saved session exists.
 - `/rename smoke-main`
@@ -107,16 +118,23 @@ Run the commands in this order unless the user explicitly wants a scoped subset:
   Expect runtime re-application from the current env/YAML without losing intended conversation/session state. After resuming an older session, this is the point where current config should replace the restored snapshot runtime.
 - `/reload code`
   Expect code reload plus a follow-up runtime reload summary. Conversation state and runtime-only session state should survive the code reload path.
+- Relaunched `/resume`
+  Expect a numbered list for the current cwd only, then a restored session summary after selection. Validate this in a fresh CLI process so the restore path is not confused with the already-loaded current session. The resumed runtime should reflect the saved session snapshot first, not the current YAML/env state.
+- Relaunched `/switch <session-id>`
+  Expect the named or selected session to become current, again with the saved snapshot applied before any later `/reload`.
 
 ## High-Value Checks
 
 - Confirm that `/runtime prompt` and `/runtime json prompt` describe the same assembled prompt.
 - Confirm that discovered skills stay inert until explicitly used.
-- Confirm that `/template:<name> <request>` rewrites one turn only and does not change prompt assembly or create persistent template state.
+- Confirm that `/template:<name> <request>` rewrites one turn only, actually executes that turn, and does not change prompt assembly or create persistent template state.
+- Confirm that session restore paths are validated from a fresh CLI process, not only from the already-loaded current session.
 - Confirm that session restore paths preserve the saved runtime snapshot first, including `model`, `base_url`, tools, prompt order, capability paths, pending skill trigger, and conversation state.
 - Confirm that `/reload` switches an already restored session back to the current env/YAML-derived runtime.
 - Confirm that reload is blocked while a response is streaming if that case is under test.
+- Confirm that a provider/network failure observed only inside the sandbox is treated as an execution-path problem first; rerun the interactive CLI outside the sandbox before calling it a CLI regression.
 - Confirm that any failure before the interactive CLI starts is classified as environment setup or interpreter/bootstrap friction before treating it as a product regression.
+- Confirm that interactive selection prompts are handled one at a time so a bad batch feed is not mistaken for a product failure.
 
 ## Failure Hints
 

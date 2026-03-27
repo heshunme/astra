@@ -47,6 +47,7 @@ uv run python -m astra --help
 - Python 源码没有语法错误
 - `astra` CLI 入口可以正常加载
 - 参数解析和主模块导入没有明显回归
+- 如果 `--help` 期间有 provider SDK 尝试拉远端元数据并打印 warning，但帮助文本正常输出且命令成功退出，优先把它视为非阻断环境噪音，而不是 CLI 回归
 
 ## 3. 自动化测试主线
 
@@ -191,7 +192,6 @@ python -m astra --cwd <temp-workspace>
 /base-url
 /base-url http://gateway.local/v1
 /sessions
-/resume
 /fork smoke-copy
 /rename smoke-main
 /save
@@ -200,18 +200,32 @@ python -m astra --cwd <temp-workspace>
 /exit
 ```
 
+然后重新启动同一个临时工作区里的 CLI，再单独验证恢复路径：
+
+```text
+/sessions
+/resume
+<输入要恢复的编号>
+/runtime
+/switch <session-id>
+/exit
+```
+
 重点观察：
 
 - `/template:<name> <request>` 最好放在修改 `/base-url` 或切到占位 smoke model 之前验证；否则如果故意把 `base_url` 指到不可达地址，或者把 `model` 设成 provider 不认识的测试值，就只能看到请求失败，测不到 template 一次性改写语义
+- `/template:<name> <request>` 不仅要看 `/runtime prompt` 没变化，还要确认它真的触发了一次单轮请求，而不是只在本地打印确认信息
 - `/runtime prompt` 是否准确反映默认 prompt 和生成的 skill catalog；`/template:<name> <request>` 不应把 template 变成新的 system prompt fragment
 - `/runtime json prompt` 是否与 `/runtime prompt` 的内容一致，只是以机器可读形式输出
 - `/skill:<name>` 是否保持 inert 直到显式触发，skill 文件是否以 `skill://...` 别名暴露给 `read`
 - `/template:<name> <request>` 是否只改写这一轮 user message，而不是创建持久 template 状态
 - `/model smoke-model` 更适合作为 setter smoke，验证完后如果还要继续做真实请求，应切回 provider 可用模型
+- `/resume` 和 `/switch` 是交互停顿点，不要把后续命令一股脑批量喂进去；先等编号选择提示出现，再继续下一步
+- `/resume`/`/switch` 最好在重启后的新 CLI 进程里验证，避免把“恢复旧会话”与“当前已经加载的会话”混在一起
 - `/resume`/`/switch` 是否先恢复保存时的完整 runtime snapshot；随后 `/reload` 是否切回当前 env/YAML runtime
 - `/runtime json` 在有重复 skill 名称时是否能看到 `skills.conflicts`
 - `fork`、`rename`、`save`、`switch`、`resume` 是否真的落盘并能恢复
-- slash 命令本身不会创建空会话，只有正常用户消息才会 materialize session
+- slash 命令本身不会创建空会话，只有正常用户消息或真正执行了一轮模型请求的 template 命令才会 materialize session
 
 ## 6. 真实 provider 端到端验证
 

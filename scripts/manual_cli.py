@@ -189,51 +189,85 @@ def create_workspace(workspace: Path, env_file: Path) -> str:
     write_text(
         workspace / "MANUAL_TESTING.md",
         """
-        Suggested commands:
+        Suggested first-pass commands:
 
         /tools
         /runtime
         /runtime warnings
         /runtime prompt
         /runtime json prompt
-        /skill:review Review src/demo.py for issues.
+        /skill:review
         /skill:debug
-        /template:pairing
+        /template:pairing Summarize docs/plan.md in one sentence.
         /reload
         /sessions
+        /save
 
-        Suggested prompts:
+        Suggested prompts to materialize and inspect a session:
 
         Read note.txt and summarize it in one sentence.
         Find manual smoke sentinel 4731 in the workspace.
         Review src/demo.py for issues.
         Use bash to print the current directory and list files under docs.
+
+        Relaunch-only commands:
+
+        /sessions
+        /resume
+        <select the saved session number>
+        /runtime
+        /switch <session-id>
+
+        Notes:
+
+        Treat /resume and /switch as interactive pause points.
+        Do not queue more commands behind them until the selection prompt is resolved.
         """,
     )
     return env_mode
 
 
-def print_intro(temp_root: Path, workspace: Path, env_file: Path, env_mode: str) -> None:
+def print_intro(
+    temp_root: Path,
+    home_dir: Path,
+    workspace: Path,
+    env_file: Path,
+    env_mode: str,
+    python_bin: Path,
+) -> None:
     print(f"Temporary root: {temp_root}")
+    print(f"Home:           {home_dir}")
     print(f"Workspace:      {workspace}")
     print(f"Env source:     {env_file}")
     print(f"Env mode:       {env_mode}")
     print()
-    print("Suggested slash commands:")
+    print("Suggested first-pass slash commands:")
     print("  /tools")
     print("  /runtime")
     print("  /runtime prompt")
     print("  /runtime json prompt")
-    print("  /skill:review Review src/demo.py for issues.")
+    print("  /skill:review")
     print("  /skill:debug")
-    print("  /template:pairing")
+    print("  /template:pairing Summarize docs/plan.md in one sentence.")
+    print("  /sessions")
+    print("  /save")
     print("  /reload")
     print()
-    print("Suggested prompts:")
+    print("Suggested prompts to materialize and inspect a session:")
     print("  Read note.txt and summarize it in one sentence.")
     print("  Find manual smoke sentinel 4731 in the workspace.")
     print("  Review src/demo.py for issues.")
     print("  Use bash to print the current directory and list files under docs.")
+    print()
+    print("Suggested relaunch command for restore checks:")
+    print(f"  env HOME={home_dir} {python_bin} -m astra --cwd {workspace}")
+    print()
+    print("Relaunch-only commands:")
+    print("  /sessions")
+    print("  /resume")
+    print("  <select the saved session number>")
+    print("  /runtime")
+    print("  /switch <session-id>")
     print()
 
 
@@ -255,7 +289,7 @@ def main(argv: list[str] | None = None) -> int:
     home_dir.mkdir(parents=True, exist_ok=True)
 
     env_mode = create_workspace(workspace, env_file)
-    print_intro(temp_root, workspace, env_file, env_mode)
+    print_intro(temp_root, home_dir, workspace, env_file, env_mode, python_bin)
     sys.stdout.flush()
 
     result_code = 0
