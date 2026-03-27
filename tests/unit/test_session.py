@@ -123,6 +123,54 @@ def test_session_list_returns_latest_first(tmp_path: Path) -> None:
     assert summaries[1].id == first.id
 
 
+def test_session_resolve_id_prefix_returns_unique_match(tmp_path: Path) -> None:
+    store = SessionStore(base_dir=tmp_path)
+    session = store.create(cwd="/repo", model="m", system_prompt="")
+    store.save(session)
+
+    resolved = store.resolve_id_prefix(session.id[:8])
+
+    assert resolved == session.id
+
+
+def test_session_resolve_id_prefix_rejects_missing_match(tmp_path: Path) -> None:
+    store = SessionStore(base_dir=tmp_path)
+    session = store.create(cwd="/repo", model="m", system_prompt="")
+    store.save(session)
+
+    with pytest.raises(ValueError, match="No session matches prefix: deadbeef"):
+        store.resolve_id_prefix("deadbeef")
+
+
+def test_session_resolve_id_prefix_rejects_ambiguous_match(tmp_path: Path) -> None:
+    store = SessionStore(base_dir=tmp_path)
+    first = store.create(cwd="/repo", model="m", system_prompt="")
+    second = store.create(cwd="/repo", model="m", system_prompt="")
+    first.id = "abc12345deadbeef"
+    second.id = "abc67890feedface"
+    store.save(first)
+    store.save(second)
+
+    with pytest.raises(ValueError) as excinfo:
+        store.resolve_id_prefix("abc")
+
+    assert str(excinfo.value).startswith("Session id prefix is ambiguous: abc (matches: ")
+    assert "abc12345deadbeef" in str(excinfo.value)
+    assert "abc67890feedface" in str(excinfo.value)
+
+
+def test_session_load_by_prefix_ignores_unparseable_unrelated_files(tmp_path: Path) -> None:
+    store = SessionStore(base_dir=tmp_path)
+    session = store.create(cwd="/repo", model="m", system_prompt="")
+    session.id = "deadbeefcafebabe1234567890abcdef"
+    store.save(session)
+    (tmp_path / "broken-session.json").write_text("{not-json", encoding="utf-8")
+
+    loaded = store.load_by_prefix("deadbeef")
+
+    assert loaded.id == session.id
+
+
 def test_session_load_preserves_agent_snapshot(tmp_path: Path) -> None:
     store = SessionStore(base_dir=tmp_path)
     session = store.create(cwd="/repo", model="gpt-test", system_prompt="sys", name="demo")

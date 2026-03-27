@@ -388,6 +388,9 @@ def main(
     startup_result = app.startup()
     for warning in startup_result.warnings:
         print(f"Warning: {warning}", file=sys.stderr)
+    if startup_result.error:
+        print(startup_result.error)
+        raise SystemExit(1)
 
     command_registry = CommandRegistry()
 
@@ -586,7 +589,7 @@ def main(
             CommandSpec(name="/resume", usage="/resume", summary="Resume a saved session by number", handler=resume_command)
         )
         command_registry.register(
-            CommandSpec(name="/switch", usage="/switch <session-id>", summary="Switch sessions", handler=switch_command)
+            CommandSpec(name="/switch", usage="/switch <session-id-prefix>", summary="Switch sessions", handler=switch_command)
         )
         command_registry.register(CommandSpec(name="/fork", usage="/fork [name]", summary="Fork the current session", handler=fork_command))
         command_registry.register(

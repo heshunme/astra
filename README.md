@@ -84,7 +84,7 @@ Saved sessions persist both message history and the agent snapshot needed to res
 - pending one-shot skill trigger
 - the full resolved runtime config for that session, including `model`, `base_url`, `system_prompt`, tool enablement and defaults, prompt order, and capability paths
 
-When you restore a session via `--session`, `/switch`, or `/resume`, Astra reapplies that saved runtime snapshot before continuing and re-reads the restored session's workspace `.env` and project YAML for request-time provider credentials and config fallback. Use `/reload` when you explicitly want to refresh from the current session workspace's env and YAML-derived runtime.
+When you restore a session via `--session`, `/switch`, or `/resume`, Astra reapplies that saved runtime snapshot before continuing and re-reads the restored session's workspace `.env` and project YAML for request-time provider credentials and config fallback. `--session` and `/switch` accept either a full session id or any unique session id prefix. Use `/reload` when you explicitly want to refresh from the current session workspace's env and YAML-derived runtime.
 Interactive commands such as `/model` and `/base-url` change only the current session runtime and any snapshots saved from it; they do not replace the env/YAML-derived baseline that `/reload` and `/reload code` restore.
 
 ## Reloadable config
@@ -222,7 +222,7 @@ This is the preferred way to check whether config, prompt files, and the generat
 - `/runtime json prompt`
 - `/sessions`
 - `/resume`
-- `/switch <session-id>`
+- `/switch <session-id-prefix>`
 - `/fork [name]`
 - `/rename <name>`
 - `/reload`

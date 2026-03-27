@@ -45,6 +45,19 @@ class FakeSessionStore:
     def load(self, session_id: str) -> Session:
         return self._sessions[session_id]
 
+    def resolve_id_prefix(self, session_id_prefix: str) -> str:
+        matches = [session_id for session_id in self._sessions if session_id.startswith(session_id_prefix)]
+        if not matches:
+            raise ValueError(f"No session matches prefix: {session_id_prefix}")
+        if len(matches) > 1:
+            raise ValueError(
+                f"Session id prefix is ambiguous: {session_id_prefix} (matches: {', '.join(matches)})"
+            )
+        return matches[0]
+
+    def load_by_prefix(self, session_id_prefix: str) -> Session:
+        return self.load(self.resolve_id_prefix(session_id_prefix))
+
     def save(self, session: Session) -> None:
         session.updated_at = f"saved-{len(self.saved_ids) + 1}"
         self._sessions[session.id] = session
@@ -283,6 +296,29 @@ def test_app_startup_allows_missing_api_key(tmp_path: Path) -> None:
 
     assert result.message == "Started application."
     assert app.api_key is None
+
+
+def test_app_startup_returns_error_for_missing_session_prefix(tmp_path: Path) -> None:
+    app, _store = _make_app(tmp_path, session_id="missing")
+
+    result = app.startup()
+
+    assert result.error == "No session matches prefix: missing"
+    assert result.message == "No session matches prefix: missing"
+
+
+def test_app_startup_returns_error_for_ambiguous_session_prefix(tmp_path: Path) -> None:
+    app, store = _make_app(tmp_path, session_id="session-")
+    first = store.create(cwd=str((tmp_path / "workspace").resolve()), model="saved-model", system_prompt="saved-prompt", name="saved")
+    second = store.create(cwd=str((tmp_path / "workspace").resolve()), model="saved-model", system_prompt="saved-prompt", name="saved")
+    store.save(first)
+    store.save(second)
+
+    result = app.startup()
+
+    expected = f"Session id prefix is ambiguous: session- (matches: {first.id}, {second.id})"
+    assert result.error == expected
+    assert result.message == expected
 
 
 def test_app_startup_merges_project_dotenv_into_agent_runtime_env(tmp_path: Path) -> None:
@@ -528,6 +564,44 @@ def test_startup_restore_refreshes_runtime_env_from_session_cwd(tmp_path: Path) 
     assert app.current_cwd() == other_cwd
     assert app.runtime_env["ANTHROPIC_API_KEY"] == "other-key"
     assert app.agent.config.runtime_env["ANTHROPIC_API_KEY"] == "other-key"
+
+
+def test_startup_restores_session_from_unique_prefix(tmp_path: Path) -> None:
+    app, store = _make_app(tmp_path, session_id="session-")
+    session = store.create(cwd=str((tmp_path / "workspace").resolve()), model="saved-model", system_prompt="saved-prompt", name="saved")
+    store.save(session)
+
+    result = app.startup()
+
+    assert result.message == "Started application."
+    assert app.current_session_id() == session.id
+    assert len(app.agent.restore_calls) == 1
+
+
+def test_switch_session_accepts_unique_prefix(tmp_path: Path) -> None:
+    app, store = _make_app(tmp_path)
+    app.startup()
+    session = store.create(cwd=str((tmp_path / "workspace").resolve()), model="saved-model", system_prompt="saved-prompt", name="saved")
+    store.save(session)
+
+    result = app.switch_session("session-")
+
+    assert result.error is None
+    assert result.message == f"Switched to {session.id}"
+
+
+def test_switch_session_rejects_ambiguous_prefix(tmp_path: Path) -> None:
+    app, store = _make_app(tmp_path)
+    app.startup()
+    first = store.create(cwd=str((tmp_path / "workspace").resolve()), model="saved-model", system_prompt="saved-prompt", name="saved")
+    second = store.create(cwd=str((tmp_path / "workspace").resolve()), model="saved-model", system_prompt="saved-prompt", name="saved")
+    store.save(first)
+    store.save(second)
+
+    result = app.switch_session("session-")
+
+    expected = f"Session id prefix is ambiguous: session- (matches: {first.id}, {second.id})"
+    assert result.error == expected
 
 
 def test_fork_rename_and_save_require_materialized_session(tmp_path: Path) -> None:

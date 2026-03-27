@@ -332,6 +332,26 @@ class SessionStore:
         data = json.loads(path.read_text(encoding="utf-8"))
         return session_from_dict(data)
 
+    def resolve_id_prefix(self, session_id_prefix: str) -> str:
+        normalized_prefix = session_id_prefix.strip()
+        if not normalized_prefix:
+            raise ValueError("Session id prefix is required.")
+
+        matches = [
+            path.stem
+            for path in sorted(self.base_dir.glob("*.json"))
+            if path.stem.startswith(normalized_prefix)
+        ]
+        if not matches:
+            raise ValueError(f"No session matches prefix: {normalized_prefix}")
+        if len(matches) > 1:
+            candidates = ", ".join(matches)
+            raise ValueError(f"Session id prefix is ambiguous: {normalized_prefix} (matches: {candidates})")
+        return matches[0]
+
+    def load_by_prefix(self, session_id_prefix: str) -> Session:
+        return self.load(self.resolve_id_prefix(session_id_prefix))
+
     def save(self, session: Session) -> None:
         session.updated_at = utc_now()
         path = self._session_path(session.id)

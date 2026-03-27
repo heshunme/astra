@@ -105,7 +105,7 @@ class AstraApp:
         ),
         CommandHelpEntry("/sessions", "List saved sessions"),
         CommandHelpEntry("/resume", "Resume a saved session by number"),
-        CommandHelpEntry("/switch <session-id>", "Switch sessions"),
+        CommandHelpEntry("/switch <session-id-prefix>", "Switch sessions"),
         CommandHelpEntry("/fork [name]", "Fork the current session"),
         CommandHelpEntry("/rename <name>", "Rename the current session"),
         CommandHelpEntry("/save", "Save the current session"),
@@ -166,10 +166,14 @@ class AstraApp:
             warnings.append(startup_reload.message)
 
         if self.options.session_id and not self.options.new_session:
-            loaded_session = self.store.load(self.options.session_id)
+            try:
+                loaded_session = self.store.load_by_prefix(self.options.session_id)
+            except ValueError as exc:
+                message = str(exc)
+                return AppActionResult(message=message, warnings=warnings, error=message)
             restored = self._restore_session(loaded_session)
             if restored.error:
-                raise RuntimeError(restored.error)
+                return AppActionResult(message=restored.message, warnings=warnings + restored.warnings, error=restored.error)
             warnings.extend(restored.warnings)
 
         return AppActionResult(message="Started application.", warnings=warnings)
@@ -379,14 +383,22 @@ class AstraApp:
         ]
 
     def switch_session(self, session_id: str) -> AppActionResult:
-        loaded_session = self.store.load(session_id)
+        try:
+            loaded_session = self.store.load_by_prefix(session_id)
+        except ValueError as exc:
+            message = str(exc)
+            return AppActionResult(message=message, error=message)
         result = self._restore_session(loaded_session)
         if result.error:
             return result
         return AppActionResult(message=f"Switched to {self._require_session_state().session.id}")
 
     def resume_session(self, session_id: str) -> AppActionResult:
-        loaded_session = self.store.load(session_id)
+        try:
+            loaded_session = self.store.load_by_prefix(session_id)
+        except ValueError as exc:
+            message = str(exc)
+            return AppActionResult(message=message, error=message)
         result = self._restore_session(loaded_session)
         if result.error:
             return result

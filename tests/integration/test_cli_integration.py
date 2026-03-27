@@ -510,6 +510,117 @@ def test_switch_command(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.
     assert f"Switched to {second.id}" in out
 
 
+def test_switch_command_accepts_unique_prefix(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+
+    store = SessionStore()
+    first = store.create(cwd=str(cwd), model="m-1", system_prompt="s-1")
+    second = store.create(cwd=str(cwd), model="m-2", system_prompt="s-2")
+    second.id = "deadbeefcafebabe1234567890abcdef"
+    store.save(first)
+    store.save(second)
+
+    monkeypatch.setattr(builtins, "input", InputFeeder(["/switch deadbeef", "/exit"]))
+    cli.main(["--cwd", str(cwd), "--session", first.id])
+
+    out = capsys.readouterr().out
+    assert f"Switched to {second.id}" in out
+
+
+def test_switch_command_rejects_ambiguous_prefix(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+
+    store = SessionStore()
+    first = store.create(cwd=str(cwd), model="m-1", system_prompt="s-1")
+    second = store.create(cwd=str(cwd), model="m-2", system_prompt="s-2")
+    third = store.create(cwd=str(cwd), model="m-3", system_prompt="s-3")
+    second.id = "deadbeefcafebabe1234567890abcdef"
+    third.id = "deadfeedcafebabe1234567890abcdef"
+    store.save(first)
+    store.save(second)
+    store.save(third)
+
+    monkeypatch.setattr(builtins, "input", InputFeeder(["/switch dead", "/exit"]))
+    cli.main(["--cwd", str(cwd), "--session", first.id])
+
+    out = capsys.readouterr().out
+    assert "Session id prefix is ambiguous: dead" in out
+    assert second.id in out
+    assert third.id in out
+
+
+def test_cli_startup_accepts_unique_session_prefix(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+
+    store = SessionStore()
+    session = store.create(cwd=str(cwd), model="m-2", system_prompt="s-2", name="beta")
+    session.id = "deadbeefcafebabe1234567890abcdef"
+    store.save(session)
+
+    monkeypatch.setattr(builtins, "input", InputFeeder(["/runtime", "/exit"]))
+    cli.main(["--cwd", str(cwd), "--session", "deadbeef"])
+
+    out = capsys.readouterr().out
+    assert f"Session {session.id}" in out
+    assert "Runtime summary" in out
+    assert "tools=read, write, edit, ls, find, grep, bash" in out
+    assert "warnings.count=0" in out
+
+
+def test_cli_startup_rejects_ambiguous_session_prefix_without_traceback(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+
+    store = SessionStore()
+    first = store.create(cwd=str(cwd), model="m-1", system_prompt="s-1")
+    second = store.create(cwd=str(cwd), model="m-2", system_prompt="s-2")
+    first.id = "deadbeefcafebabe1234567890abcdef"
+    second.id = "deadfeedcafebabe1234567890abcdef"
+    store.save(first)
+    store.save(second)
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main(["--cwd", str(cwd), "--session", "dead"])
+
+    captured = capsys.readouterr()
+    assert excinfo.value.code == 1
+    assert "Session id prefix is ambiguous: dead" in captured.out
+    assert "Traceback" not in captured.err
+
+
+def test_cli_startup_prefix_ignores_unparseable_unrelated_session_file(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+
+    store = SessionStore()
+    session = store.create(cwd=str(cwd), model="m-2", system_prompt="s-2", name="beta")
+    session.id = "deadbeefcafebabe1234567890abcdef"
+    store.save(session)
+    (tmp_path / ".astra-python" / "sessions" / "broken-session.json").write_text("{not-json", encoding="utf-8")
+
+    monkeypatch.setattr(builtins, "input", InputFeeder(["/runtime", "/exit"]))
+    cli.main(["--cwd", str(cwd), "--session", "deadbeef"])
+
+    out = capsys.readouterr().out
+    assert f"Session {session.id}" in out
+    assert "Runtime summary" in out
+
+
 def test_resume_command(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     cwd = tmp_path / "workspace"
     cwd.mkdir()
