@@ -2,7 +2,7 @@
 
 This repository contains a Python coding-agent runtime that is moving toward a reusable core engine plus a thin application layer.
 
-- OpenAI-compatible streaming chat
+- LiteLLM-backed streaming chat
 - Tool calling loop
 - Agent-core state machine with a stable event stream
 - Workspace-scoped file and shell tools
@@ -16,9 +16,12 @@ This repository contains a Python coding-agent runtime that is moving toward a r
 ## Requirements
 
 - Python 3.11+
-- `OPENAI_API_KEY`
-- Optional: `OPENAI_BASE_URL`, `OPENAI_MODEL`
-- Optional project `.env` file (for `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`)
+- `litellm==1.82.6` is installed with the package
+- Provider credentials via LiteLLM-supported environment variables
+- Optional: `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`
+- Optional project `.env` file (for `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`, or other LiteLLM provider vars)
+
+Use provider-qualified model names when possible, for example `openai/gpt-5`, `anthropic/claude-sonnet-4-5`, or `ollama/llama3.2`. Unqualified names such as `gpt-5.2` are still accepted and are treated as `openai/gpt-5.2`.
 
 ## Quick start
 
@@ -26,7 +29,7 @@ This repository contains a Python coding-agent runtime that is moving toward a r
 uv venv .venv
 . .venv/Scripts/activate
 uv pip install -e .
-astra --model gpt-4o-mini --base-url http://your-gateway/v1
+astra --model openai/gpt-5 --base-url http://your-gateway/v1
 ```
 
 ## Codex sandbox
@@ -98,7 +101,7 @@ Environment variables are also loaded from `<cwd>/.env` (if present). Values alr
 Example:
 
 ```yaml
-model: gpt-4o-mini
+model: openai/gpt-5-mini
 base_url: http://your-gateway/v1
 system_prompt: Be strict about verifying edits before writing.
 
@@ -123,6 +126,8 @@ capabilities:
   skills:
     paths: []
 ```
+
+`base_url` remains Astra's runtime setting and now maps to LiteLLM `api_base`. First-pass multi-provider support intentionally relies on LiteLLM's own environment-variable conventions rather than new Astra-specific config keys.
 
 ## Prompt and skill resources
 

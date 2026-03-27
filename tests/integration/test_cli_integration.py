@@ -88,6 +88,26 @@ def test_runtime_json_prompt_command(capsys: pytest.CaptureFixture[str], monkeyp
     assert _saved_session_files(tmp_path) == []
 
 
+def test_provider_qualified_model_does_not_require_openai_api_key(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+
+    def fake_stream_chat(self, _request):
+        yield ProviderEvent(type="text_delta", delta="ok")
+        yield ProviderEvent(type="done")
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(OpenAICompatibleProvider, "stream_chat", fake_stream_chat)
+    monkeypatch.setattr(builtins, "input", InputFeeder(["hello", "/exit"]))
+
+    cli.main(["--cwd", str(cwd), "--model", "ollama/llama3.2"])
+
+    out = capsys.readouterr().out
+    assert "ok" in out
+
+
 def test_help_includes_extension_commands(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -460,6 +480,7 @@ def test_switch_command(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.
 def test_resume_command(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     cwd = tmp_path / "workspace"
     cwd.mkdir()
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
 
     store = SessionStore()
     first = store.create(cwd=str(cwd), model="m-1", system_prompt="s-1", name="alpha")

@@ -276,11 +276,13 @@ def test_app_startup_applies_runtime_and_collects_warnings(tmp_path: Path) -> No
     assert len(app.agent.apply_calls) == 1
 
 
-def test_app_startup_requires_api_key(tmp_path: Path) -> None:
+def test_app_startup_allows_missing_api_key(tmp_path: Path) -> None:
     app, _store = _make_app(tmp_path, env={"PATH": "/usr/bin"})
 
-    with pytest.raises(RuntimeError, match="OPENAI_API_KEY is required"):
-        app.startup()
+    result = app.startup()
+
+    assert result.message == "Started application."
+    assert app.api_key is None
 
 
 def test_submit_prompt_materializes_session_and_sets_default_name(tmp_path: Path) -> None:

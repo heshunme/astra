@@ -48,6 +48,8 @@ These instructions apply to the entire repository tree.
   - `capabilities.prompts.paths`
   - `capabilities.skills.paths`
 - `capabilities.skills.enabled` is removed and must not be reintroduced.
+- Prefer LiteLLM provider-qualified model names such as `openai/...`, `anthropic/...`, or `ollama/...`; unqualified names are treated as OpenAI models for compatibility.
+- `base_url` remains the Astra runtime key and maps to LiteLLM `api_base`.
 
 ## Runtime behavior
 - `/reload` is the stable runtime reload path.
@@ -58,6 +60,7 @@ These instructions apply to the entire repository tree.
 - Session snapshot restore must also preserve runtime-only state such as pending skill trigger, `model`, `base_url`, and `system_prompt`.
 - A new session is materialized/saved only after a normal user prompt, not by slash commands alone.
 - Prompt assembly must match the exact prompt sent to provider: default refs + discovered fragments + session skill catalog.
+- Do not require `OPENAI_API_KEY` at startup; defer credential validation to the active LiteLLM provider path.
 
 ## Skill/Template behavior
 - Discovered skills are inert until explicitly used via `/skill:<name> ...` or armed for next turn with `/skill:<name>`.
@@ -98,7 +101,7 @@ These instructions apply to the entire repository tree.
   - `uv run python -m compileall src`
   - `uv run python -m astra --help`
   - `python -c` smoke checks for local config/runtime assembly when network calls are unnecessary
-  - For command-path changes, pipe scripted input into `python -m astra` with a fake `OPENAI_API_KEY`.
+  - For command-path changes, pipe scripted input into `python -m astra` with provider env vars only when that path requires them.
 - Common mistakes:
   - Missing new runtime fields during clone/reload/switch paths.
   - Restoring `model`/`system_prompt` but accidentally dropping session-specific `base_url` or template/pending-skill state.

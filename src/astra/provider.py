@@ -1,11 +1,9 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
-import http.client
-import json
-import ssl
 from dataclasses import dataclass
 from typing import Any, Iterator
-from urllib.parse import urlparse
+
+import litellm
 
 from .models import ProviderEvent
 
@@ -23,126 +21,135 @@ class ProviderRequest:
     model: str
     messages: list[dict[str, Any]]
     tools: list[dict[str, Any]]
-    api_key: str
+    api_key: str | None
     base_url: str
     temperature: float = 0.0
 
 
-class SSEStream:
-    def __init__(self, connection: http.client.HTTPConnection, response: http.client.HTTPResponse):
-        self._connection = connection
-        self._response = response
-        self._closed = False
+def _get_value(payload: Any, key: str, default: Any = None) -> Any:
+    if payload is None:
+        return default
+    if isinstance(payload, dict):
+        return payload.get(key, default)
+    return getattr(payload, key, default)
 
-    def close(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        try:
-            self._response.close()
-        finally:
-            self._connection.close()
 
-    def iter_events(self) -> Iterator[str]:
-        data_lines: list[str] = []
-        while True:
-            raw_line = self._response.readline()
-            if not raw_line:
-                if data_lines:
-                    yield "\n".join(data_lines)
-                return
-            line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
-            if not line:
-                if data_lines:
-                    yield "\n".join(data_lines)
-                    data_lines = []
-                continue
-            if line.startswith("data:"):
-                data_lines.append(line[5:].lstrip())
+def _coerce_dict(payload: Any) -> dict[str, Any] | None:
+    if payload is None:
+        return None
+    if isinstance(payload, dict):
+        return payload
+    model_dump = getattr(payload, "model_dump", None)
+    if callable(model_dump):
+        dumped = model_dump(exclude_none=False)
+        if isinstance(dumped, dict):
+            return dumped
+    return None
+
+
+def _coerce_list(payload: Any) -> list[Any]:
+    if payload is None:
+        return []
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, tuple):
+        return list(payload)
+    return []
+
+
+def _normalize_model(model: str) -> str:
+    return model if "/" in model else f"openai/{model}"
+
+
+def _looks_like_abort(exc: BaseException) -> bool:
+    name = exc.__class__.__name__.lower()
+    message = str(exc).lower()
+    abort_markers = ("abort", "cancel", "closed", "close", "disconnect", "generatorexit", "stopiteration")
+    return any(marker in name or marker in message for marker in abort_markers)
 
 
 class OpenAICompatibleProvider:
     def __init__(self, base_url: str):
         self.base_url = base_url.rstrip("/")
-        self._active_stream: SSEStream | None = None
+        self._active_stream: Any | None = None
 
     def close_active_stream(self) -> None:
-        if self._active_stream is not None:
-            self._active_stream.close()
-            self._active_stream = None
+        stream = self._active_stream
+        self._active_stream = None
+        if stream is None:
+            return
+        close = getattr(stream, "close", None)
+        if callable(close):
+            close()
 
-    def _build_connection(self, parsed_url: Any) -> http.client.HTTPConnection:
-        port = parsed_url.port
-        if parsed_url.scheme == "https":
-            context = ssl.create_default_context()
-            return http.client.HTTPSConnection(parsed_url.hostname, port or 443, context=context, timeout=300)
-        return http.client.HTTPConnection(parsed_url.hostname, port or 80, timeout=300)
-
-    def _request_stream(self, request: ProviderRequest) -> SSEStream:
-        target = f"{request.base_url.rstrip('/')}/chat/completions"
-        parsed = urlparse(target)
-        path = parsed.path or "/chat/completions"
-        if parsed.query:
-            path = f"{path}?{parsed.query}"
-        connection = self._build_connection(parsed)
-        payload: dict[str, Any] = {
-            "model": request.model,
+    def _completion_kwargs(self, request: ProviderRequest) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {
+            "model": _normalize_model(request.model),
             "messages": request.messages,
-            "tools": request.tools,
-            "tool_choice": "auto",
             "stream": True,
             "temperature": request.temperature,
-            "stream_options": {"include_usage": True},
+            "api_base": request.base_url,
         }
-        body = json.dumps(payload).encode("utf-8")
-        headers = {
-            "Authorization": f"Bearer {request.api_key}",
-            "Content-Type": "application/json",
-            "Accept": "text/event-stream",
-        }
-        connection.request("POST", path, body=body, headers=headers)
-        response = connection.getresponse()
-        if response.status < 200 or response.status >= 300:
-            error_body = response.read().decode("utf-8", errors="replace")
-            connection.close()
-            raise ProviderError(f"Provider request failed with {response.status}: {error_body}")
-        return SSEStream(connection, response)
+        if request.api_key:
+            kwargs["api_key"] = request.api_key
+        if request.tools:
+            kwargs["tools"] = request.tools
+            kwargs["tool_choice"] = "auto"
+        return kwargs
+
+    def _stream_chunks(self, request: ProviderRequest) -> Any:
+        return litellm.completion(**self._completion_kwargs(request))
+
+    def _usage_from_chunk(self, chunk: Any) -> dict[str, Any] | None:
+        usage = _get_value(chunk, "usage")
+        usage_dict = _coerce_dict(usage)
+        if usage_dict is not None:
+            return usage_dict
+        return usage if isinstance(usage, dict) else None
 
     def stream_chat(self, request: ProviderRequest) -> Iterator[ProviderEvent]:
-        stream = self._request_stream(request)
-        self._active_stream = stream
         try:
-            for payload in stream.iter_events():
-                if payload == "[DONE]":
-                    yield ProviderEvent(type="done")
-                    break
-                chunk = json.loads(payload)
-                usage = chunk.get("usage")
+            stream = self._stream_chunks(request)
+            self._active_stream = stream
+            done_emitted = False
+            for chunk in stream:
+                usage = self._usage_from_chunk(chunk)
                 if usage:
                     yield ProviderEvent(type="usage", usage=usage)
-                choices = chunk.get("choices") or []
+
+                choices = _coerce_list(_get_value(chunk, "choices"))
                 if not choices:
                     continue
-                delta = choices[0].get("delta") or {}
-                content = delta.get("content")
-                if content:
+
+                delta = _get_value(choices[0], "delta")
+                content = _get_value(delta, "content")
+                if isinstance(content, str) and content:
                     yield ProviderEvent(type="text_delta", delta=content)
-                for tool_call in delta.get("tool_calls") or []:
-                    function = tool_call.get("function") or {}
+
+                for tool_call in _coerce_list(_get_value(delta, "tool_calls")):
+                    function = _get_value(tool_call, "function")
                     yield ProviderEvent(
                         type="tool_call_delta",
-                        index=tool_call.get("index"),
-                        tool_call_id=tool_call.get("id"),
-                        tool_name=function.get("name"),
-                        tool_arguments_delta=function.get("arguments") or "",
+                        index=_get_value(tool_call, "index"),
+                        tool_call_id=_get_value(tool_call, "id"),
+                        tool_name=_get_value(function, "name"),
+                        tool_arguments_delta=_get_value(function, "arguments", "") or "",
                     )
-                finish_reason = choices[0].get("finish_reason")
+
+                finish_reason = _get_value(choices[0], "finish_reason")
                 if finish_reason in {"stop", "tool_calls"}:
                     yield ProviderEvent(type="done")
+                    done_emitted = True
                     break
-        except OSError as exc:
-            raise ProviderAborted("Provider stream aborted") from exc
+        except Exception as exc:
+            if _looks_like_abort(exc):
+                raise ProviderAborted("Provider stream aborted") from exc
+            raise ProviderError(str(exc)) from exc
         finally:
-            stream.close()
-            if self._active_stream is stream:
-                self._active_stream = None
+            try:
+                self.close_active_stream()
+            except Exception:
+                pass
+
+        if not done_emitted:
+            yield ProviderEvent(type="done")

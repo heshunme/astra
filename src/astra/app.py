@@ -142,15 +142,11 @@ class AstraApp:
 
     def startup(self) -> AppActionResult:
         runtime_config, warnings = self._load_runtime_config()
-        api_key = self.runtime_env.get("OPENAI_API_KEY")
-        if not api_key:
-            raise RuntimeError("OPENAI_API_KEY is required")
-        self.api_key = api_key
         self.capability_runtime = self._runtime_factory(self.cwd)
         self.agent = self._agent_factory(
             AgentConfig(
                 model=runtime_config.model,
-                api_key=api_key,
+                api_key=self.api_key,
                 base_url=runtime_config.base_url,
                 cwd=self.cwd,
                 system_prompt=runtime_config.system_prompt,
@@ -264,7 +260,9 @@ class AstraApp:
 
     def reload_runtime(self) -> ReloadResult:
         runtime_config, warnings = self._load_runtime_config()
-        result = self._require_agent().apply_runtime_config(runtime_config)
+        agent = self._require_agent()
+        agent.config.api_key = self.api_key
+        result = agent.apply_runtime_config(runtime_config)
         combined_warnings = list(warnings)
         combined_warnings.extend(result.warnings)
         if result.success and self._require_session_state().materialized:
@@ -322,7 +320,7 @@ class AstraApp:
         self.agent = agent_module.Agent(
             agent_module.AgentConfig(
                 model=restored_snapshot.runtime.runtime_config.model,
-                api_key=self.api_key or "",
+                api_key=self.api_key,
                 base_url=restored_snapshot.runtime.runtime_config.base_url,
                 cwd=restored_cwd,
                 system_prompt=restored_snapshot.runtime.runtime_config.system_prompt,
@@ -426,6 +424,7 @@ class AstraApp:
             warnings.append(str(exc))
             env_map = dict(self._env_provider())
         self.runtime_env = dict(env_map)
+        self.api_key = self.runtime_env.get("OPENAI_API_KEY")
         try:
             raw_config = self.config_manager.load(self.cwd)
         except ConfigError as exc:

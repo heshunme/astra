@@ -41,7 +41,7 @@ ToolExecutor = Callable[[object, str, ToolContext], object]
 @dataclass(slots=True)
 class AgentConfig:
     model: str
-    api_key: str
+    api_key: str | None
     base_url: str
     cwd: Path
     system_prompt: str

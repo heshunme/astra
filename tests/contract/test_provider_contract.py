@@ -1,96 +1,165 @@
 from __future__ import annotations
 
-import json
-import threading
-from contextlib import contextmanager
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Iterator
+from types import SimpleNamespace
 
 import pytest
 
-from astra.provider import OpenAICompatibleProvider, ProviderError, ProviderRequest
+from astra.provider import OpenAICompatibleProvider, ProviderAborted, ProviderError, ProviderRequest
 
 
 pytestmark = pytest.mark.contract
 
 
-@contextmanager
-def run_server(handler_cls: type[BaseHTTPRequestHandler]) -> Iterator[ThreadingHTTPServer]:
-    server = ThreadingHTTPServer(("127.0.0.1", 0), handler_cls)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        yield server
-    finally:
-        server.shutdown()
-        thread.join(timeout=2)
-        server.server_close()
+class _UsagePayload:
+    def model_dump(self, exclude_none: bool = False) -> dict[str, int]:
+        return {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3}
 
 
-def test_provider_parses_sse_stream() -> None:
-    class SSEHandler(BaseHTTPRequestHandler):
-        def log_message(self, _format: str, *_args) -> None:  # pragma: no cover
-            return
+class _ClosableStream:
+    def __init__(self, chunks):
+        self._chunks = iter(chunks)
+        self.closed = False
 
-        def do_POST(self) -> None:  # noqa: N802
-            length = int(self.headers.get("Content-Length", "0"))
-            _ = self.rfile.read(length)
-            self.send_response(200)
-            self.send_header("Content-Type", "text/event-stream")
-            self.end_headers()
+    def __iter__(self):
+        return self
 
-            chunks = [
+    def __next__(self):
+        return next(self._chunks)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_provider_translates_litellm_stream_and_normalizes_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured_kwargs: dict[str, object] = {}
+    chunks = [
+        {
+            "usage": {"prompt_tokens": 4, "completion_tokens": 5, "total_tokens": 9},
+            "choices": [
                 {
-                    "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
-                    "choices": [{"delta": {"content": "hello"}, "finish_reason": None}],
-                },
+                    "delta": {"content": "hello"},
+                    "finish_reason": None,
+                }
+            ],
+        },
+        SimpleNamespace(
+            usage=_UsagePayload(),
+            choices=[
+                SimpleNamespace(
+                    delta=SimpleNamespace(
+                        tool_calls=[
+                            SimpleNamespace(
+                                index=0,
+                                id="call-1",
+                                function=SimpleNamespace(name="read", arguments='{"path":"a.txt"}'),
+                            )
+                        ]
+                    ),
+                    finish_reason="tool_calls",
+                )
+            ],
+        ),
+    ]
+    stream = _ClosableStream(chunks)
+
+    def fake_completion(**kwargs):
+        captured_kwargs.update(kwargs)
+        return stream
+
+    monkeypatch.setattr("astra.provider.litellm.completion", fake_completion)
+
+    provider = OpenAICompatibleProvider("http://127.0.0.1:4000/v1")
+    request = ProviderRequest(
+        model="gpt-5.2",
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[{"type": "function", "function": {"name": "read"}}],
+        api_key="test-key",
+        base_url=provider.base_url,
+    )
+
+    events = list(provider.stream_chat(request))
+
+    assert captured_kwargs["model"] == "openai/gpt-5.2"
+    assert captured_kwargs["api_base"] == "http://127.0.0.1:4000/v1"
+    assert captured_kwargs["api_key"] == "test-key"
+    assert captured_kwargs["tool_choice"] == "auto"
+    assert [event.type for event in events] == ["usage", "text_delta", "usage", "tool_call_delta", "done"]
+    assert events[1].delta == "hello"
+    assert events[3].tool_name == "read"
+    assert events[3].tool_arguments_delta == '{"path":"a.txt"}'
+    assert stream.closed is True
+
+
+def test_provider_passes_provider_qualified_models_through(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured_kwargs: dict[str, object] = {}
+
+    def fake_completion(**kwargs):
+        captured_kwargs.update(kwargs)
+        return _ClosableStream(
+            [
                 {
                     "choices": [
                         {
-                            "delta": {
-                                "tool_calls": [
-                                    {
-                                        "index": 0,
-                                        "id": "call-1",
-                                        "function": {"name": "read", "arguments": '{"path":"a.txt"}'},
-                                    }
-                                ]
-                            },
-                            "finish_reason": "tool_calls",
+                            "delta": {"content": "ok"},
+                            "finish_reason": "stop",
                         }
                     ]
-                },
+                }
             ]
-            for payload in chunks:
-                self.wfile.write(f"data: {json.dumps(payload)}\n\n".encode("utf-8"))
-                self.wfile.flush()
-            self.wfile.write(b"data: [DONE]\n\n")
-            self.wfile.flush()
+        )
 
-    with run_server(SSEHandler) as server:
-        provider = OpenAICompatibleProvider(f"http://127.0.0.1:{server.server_port}/v1")
-        request = ProviderRequest(model="m", messages=[], tools=[], api_key="k", base_url=provider.base_url)
-        events = list(provider.stream_chat(request))
+    monkeypatch.setattr("astra.provider.litellm.completion", fake_completion)
 
-    assert [event.type for event in events] == ["usage", "text_delta", "tool_call_delta", "done"]
-    assert events[1].delta == "hello"
-    assert events[2].tool_name == "read"
-    assert events[2].tool_arguments_delta == '{"path":"a.txt"}'
+    provider = OpenAICompatibleProvider("http://localhost:11434")
+    request = ProviderRequest(
+        model="ollama/llama3.2",
+        messages=[],
+        tools=[],
+        api_key=None,
+        base_url=provider.base_url,
+    )
+
+    list(provider.stream_chat(request))
+
+    assert captured_kwargs["model"] == "ollama/llama3.2"
+    assert captured_kwargs["api_base"] == "http://localhost:11434"
+    assert "api_key" not in captured_kwargs
+    assert "tools" not in captured_kwargs
+    assert "tool_choice" not in captured_kwargs
 
 
-def test_provider_raises_on_non_2xx() -> None:
-    class ErrorHandler(BaseHTTPRequestHandler):
-        def log_message(self, _format: str, *_args) -> None:  # pragma: no cover
-            return
+def test_provider_maps_litellm_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_completion(**_kwargs):
+        raise RuntimeError("boom")
 
-        def do_POST(self) -> None:  # noqa: N802
-            self.send_response(500)
-            self.send_header("Content-Type", "text/plain")
-            self.end_headers()
-            self.wfile.write(b"boom")
+    monkeypatch.setattr("astra.provider.litellm.completion", fake_completion)
 
-    with run_server(ErrorHandler) as server:
-        provider = OpenAICompatibleProvider(f"http://127.0.0.1:{server.server_port}/v1")
-        request = ProviderRequest(model="m", messages=[], tools=[], api_key="k", base_url=provider.base_url)
-        with pytest.raises(ProviderError, match="Provider request failed with 500"):
-            list(provider.stream_chat(request))
+    provider = OpenAICompatibleProvider("http://127.0.0.1:4000/v1")
+    request = ProviderRequest(model="gpt-5.2", messages=[], tools=[], api_key="k", base_url=provider.base_url)
+
+    with pytest.raises(ProviderError, match="boom"):
+        list(provider.stream_chat(request))
+
+
+def test_provider_maps_abort_like_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_completion(**_kwargs):
+        raise RuntimeError("stream closed")
+
+    monkeypatch.setattr("astra.provider.litellm.completion", fake_completion)
+
+    provider = OpenAICompatibleProvider("http://127.0.0.1:4000/v1")
+    request = ProviderRequest(model="gpt-5.2", messages=[], tools=[], api_key="k", base_url=provider.base_url)
+
+    with pytest.raises(ProviderAborted, match="Provider stream aborted"):
+        list(provider.stream_chat(request))
+
+
+def test_close_active_stream_closes_stream_object() -> None:
+    stream = _ClosableStream([])
+    provider = OpenAICompatibleProvider("http://127.0.0.1:4000/v1")
+    provider._active_stream = stream
+
+    provider.close_active_stream()
+
+    assert stream.closed is True
+    assert provider._active_stream is None
