@@ -184,6 +184,9 @@ class AstraApp:
             return None
         return session_state.session.id
 
+    def session_handle_id(self) -> str:
+        return self._require_session_state().session.id
+
     def current_session_name(self) -> str | None:
         return self._require_session_state().session.name
 
@@ -192,6 +195,12 @@ class AstraApp:
 
     def current_cwd(self) -> Path:
         return Path(self._require_agent().runtime_state.cwd)
+
+    def session_cwd(self) -> str:
+        return self._require_session_state().session.cwd
+
+    def session_updated_at(self) -> str:
+        return self._require_session_state().session.updated_at
 
     @property
     def is_streaming(self) -> bool:
@@ -343,10 +352,15 @@ class AstraApp:
             error=None if runtime_result.success else runtime_result.message,
         )
 
-    def submit_prompt(self, text: str) -> AgentRunResult:
+    def submit_prompt(
+        self,
+        text: str,
+        *,
+        on_event: Callable[[str, dict[str, object]], None] | None = None,
+    ) -> AgentRunResult:
         agent = self._require_agent()
         self._set_default_session_name(text)
-        result = agent.prompt(text, raw_input=text)
+        result = agent.prompt(text, raw_input=text, on_event=on_event)
         self._persist_agent_state(create_if_needed=True)
         return result
 
@@ -355,13 +369,35 @@ class AstraApp:
         persisted = self._persist_agent_state() if self._require_session_state().materialized else False
         return AppActionResult(message=message, error=None if success else message, persisted=persisted)
 
-    def run_skill(self, name: str, request_text: str) -> AgentRunResult:
-        result = self._require_agent().run_skill(name, request_text, f"/skill:{name} {request_text}")
+    def run_skill(
+        self,
+        name: str,
+        request_text: str,
+        *,
+        on_event: Callable[[str, dict[str, object]], None] | None = None,
+    ) -> AgentRunResult:
+        result = self._require_agent().run_skill(
+            name,
+            request_text,
+            f"/skill:{name} {request_text}",
+            on_event=on_event,
+        )
         self._persist_agent_state(create_if_needed=True)
         return result
 
-    def run_template(self, name: str, request_text: str) -> AgentRunResult:
-        result = self._require_agent().run_template(name, request_text, f"/template:{name} {request_text}")
+    def run_template(
+        self,
+        name: str,
+        request_text: str,
+        *,
+        on_event: Callable[[str, dict[str, object]], None] | None = None,
+    ) -> AgentRunResult:
+        result = self._require_agent().run_template(
+            name,
+            request_text,
+            f"/template:{name} {request_text}",
+            on_event=on_event,
+        )
         self._persist_agent_state(create_if_needed=True)
         return result
 

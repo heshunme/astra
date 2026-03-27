@@ -211,13 +211,13 @@ class FakeAgent:
         self.arm_skill_calls.append((name, raw_command))
         return True, f"Next message will use skill: {name}"
 
-    def run_skill(self, name: str, request_text: str, raw_command: str):
+    def run_skill(self, name: str, request_text: str, raw_command: str, *, on_event=None):
         self.run_skill_calls.append((name, request_text, raw_command))
         self.messages.append(Message(role="user", content=f"skill:{name}:{request_text}"))
         self.snapshot_value.conversation.messages = list(self.messages)
         return AgentRunResult(assistant_messages=[], tool_results=[], error=None)
 
-    def run_template(self, name: str, request_text: str, raw_command: str):
+    def run_template(self, name: str, request_text: str, raw_command: str, *, on_event=None):
         self.run_template_calls.append((name, request_text, raw_command))
         self.messages.append(Message(role="user", content=f"template:{name}:{request_text}"))
         self.snapshot_value.conversation.messages = list(self.messages)
