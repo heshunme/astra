@@ -231,7 +231,7 @@ Use `/resume` to interactively list saved sessions by number and reopen one with
 
 Use `/skills` to inspect the currently usable skill catalog from the CLI. The listed files are `skill://...` aliases that can be passed to the `read` tool. If skills are discovered but the `read` tool is disabled, Astra prints a note instead of advertising unusable `/skill:<name>` actions.
 
-Use `/runtime json` when you need full duplicate-skill diagnostics. The `skills.conflicts` array includes the winning source plus every shadowed source for each duplicated skill name.
+Use `/runtime json` when you need full duplicate-skill diagnostics. Skill source fields are exposed as virtual identifiers such as `skill://review`, not host absolute paths. The `skills.conflicts` array includes the winning source plus every shadowed source for each duplicated skill name.
 
 Use `/templates` to list discovered templates.
 

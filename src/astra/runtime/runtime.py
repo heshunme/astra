@@ -36,6 +36,7 @@ class SkillSpec:
     summary: str
     when_to_use: str
     source: str
+    origin: str
     source_label: str
     root_kind: str
     root_order: int
@@ -130,7 +131,7 @@ class SkillRegistry:
             if not skills:
                 continue
             winner = self._select_winner(skills)
-            shadowed = [skill for skill in skills if skill.source != winner.source]
+            shadowed = [skill for skill in skills if skill.origin != winner.origin]
             winner.shadowed_sources = [skill.source for skill in shadowed]
             result[name] = winner
             diagnostics.loaded_skills.append(name)
@@ -153,7 +154,7 @@ class SkillRegistry:
         return result
 
     def _select_winner(self, skills: list[SkillSpec]) -> SkillSpec:
-        return max(skills, key=lambda skill: (self._root_priority(skill.root_kind), skill.root_order, skill.source))
+        return max(skills, key=lambda skill: (self._root_priority(skill.root_kind), skill.root_order, skill.origin))
 
     def _root_priority(self, root_kind: str) -> int:
         if root_kind == "project":
@@ -443,7 +444,8 @@ class CapabilityRuntime:
                 name=name,
                 summary=summary.strip(),
                 when_to_use=(when_to_use or "").strip(),
-                source=str(skill_file),
+                source=self._build_skill_source_alias(name.strip()),
+                origin=str(skill_file),
                 source_label=skill_dir.source.label,
                 root_kind=skill_dir.source.kind,
                 root_order=skill_dir.source.order,
@@ -482,6 +484,9 @@ class CapabilityRuntime:
     def _build_skill_resource_alias(self, skill_name: str, relative_path: Path) -> str:
         normalized = relative_path.as_posix().lstrip("/")
         return f"skill://{skill_name}/{normalized}"
+
+    def _build_skill_source_alias(self, skill_name: str) -> str:
+        return f"skill://{skill_name}"
 
     def _collect_skill_file_aliases(self, skills: dict[str, SkillSpec]) -> dict[str, Path]:
         aliases: dict[str, Path] = {}

@@ -665,6 +665,7 @@ class Agent:
             "skill_trigger": {
                 "name": skill.name,
                 "source": skill.source,
+                "source_label": skill.source_label,
                 "files": list(skill.files),
             },
         }

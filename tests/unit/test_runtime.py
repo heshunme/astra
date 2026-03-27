@@ -224,16 +224,18 @@ prompt_files:
     )
 
     assert snapshot.skills["review"].summary == "review skill 4"
-    assert snapshot.skills["review"].source == str((project_skill_dir / "skill.yaml").resolve())
+    assert snapshot.skills["review"].source == "skill://review"
     assert snapshot.skills["review"].source_label == "project (.astra/skills)"
     assert snapshot.skills["review"].files == ["skill://review/checklist.md"]
     assert snapshot.skill_file_aliases["skill://review/checklist.md"] == (project_skill_dir / "checklist.md").resolve()
-    assert len(snapshot.skills["review"].shadowed_sources) == 3
+    assert snapshot.skills["review"].shadowed_sources == ["skill://review", "skill://review", "skill://review"]
     assert snapshot.diagnostics.loaded_skills == ["review"]
     assert len(snapshot.diagnostics.skill_conflicts) == 1
     conflict = snapshot.diagnostics.skill_conflicts[0]
     assert conflict.name == "review"
+    assert conflict.winner_source == "skill://review"
     assert conflict.winner_source_label == "project (.astra/skills)"
+    assert conflict.shadowed_sources == ["skill://review", "skill://review", "skill://review"]
     assert "global (~/.astra-python/skills)" in conflict.shadowed_source_labels
     assert "extra[1]" in conflict.shadowed_source_labels[1]
     assert "extra[2]" in conflict.shadowed_source_labels[2]

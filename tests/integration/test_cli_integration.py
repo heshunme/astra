@@ -140,8 +140,12 @@ def test_runtime_and_skills_commands_surface_skill_conflicts(
     assert "Source: project (.astra/skills)" in out
     assert "Shadowed definitions: 1" in out
     assert '"conflicts": [' in out
+    assert '"source": "skill://review"' in out
+    assert '"winner_source": "skill://review"' in out
     assert '"winner_source_label": "project (.astra/skills)"' in out
     assert '"shadowed_source_labels": [' in out
+    assert str(global_skill_dir / "skill.yaml") not in out
+    assert str(cwd / ".astra" / "skills" / "review" / "skill.yaml") not in out
 
 
 def test_skills_command_prints_empty_state_when_no_skills_exist(

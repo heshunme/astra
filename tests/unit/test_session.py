@@ -31,9 +31,9 @@ def test_session_save_and_load_round_trip(tmp_path: Path) -> None:
             summary="review checklist",
             when_to_use="Use for code review requests.",
             files=["skill://review/checklist.md"],
-            source="/repo/.astra/skills/review/skill.yaml",
+            source="skill://review",
             source_label="project (.astra/skills)",
-            shadowed_sources=["/repo/shared/skills/review/skill.yaml"],
+            shadowed_sources=["skill://review"],
         )
     )
     session.messages.append(
@@ -55,10 +55,44 @@ def test_session_save_and_load_round_trip(tmp_path: Path) -> None:
     assert loaded.skill_catalog_snapshot[0].name == "review"
     assert loaded.skill_catalog_snapshot[0].files == ["skill://review/checklist.md"]
     assert not loaded.skill_catalog_snapshot[0].history_only
+    assert loaded.skill_catalog_snapshot[0].source == "skill://review"
     assert loaded.skill_catalog_snapshot[0].source_label == "project (.astra/skills)"
-    assert loaded.skill_catalog_snapshot[0].shadowed_sources == ["/repo/shared/skills/review/skill.yaml"]
+    assert loaded.skill_catalog_snapshot[0].shadowed_sources == ["skill://review"]
     assert loaded.messages[0].tool_calls[0].name == "read"
     assert loaded.messages[0].metadata == {"a": 1}
+
+
+def test_session_load_accepts_legacy_absolute_skill_sources(tmp_path: Path) -> None:
+    store = SessionStore(base_dir=tmp_path)
+    session = store.create(cwd="/repo", model="gpt-test", system_prompt="sys", name="demo")
+    payload = {
+        "id": session.id,
+        "name": session.name,
+        "cwd": session.cwd,
+        "created_at": session.created_at,
+        "updated_at": session.updated_at,
+        "model": session.model,
+        "system_prompt": session.system_prompt,
+        "messages": [],
+        "skill_catalog_snapshot": [
+            {
+                "name": "review",
+                "summary": "review checklist",
+                "when_to_use": "Use for code review requests.",
+                "files": ["skill://review/checklist.md"],
+                "source": "/repo/.astra/skills/review/skill.yaml",
+                "source_label": "project (.astra/skills)",
+                "shadowed_sources": ["/repo/shared/skills/review/skill.yaml"],
+                "history_only": False,
+            }
+        ],
+    }
+    (tmp_path / f"{session.id}.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    loaded = store.load(session.id)
+
+    assert loaded.skill_catalog_snapshot[0].source == "/repo/.astra/skills/review/skill.yaml"
+    assert loaded.skill_catalog_snapshot[0].shadowed_sources == ["/repo/shared/skills/review/skill.yaml"]
 
 
 def test_session_fork_keeps_parent_and_messages(tmp_path: Path) -> None:

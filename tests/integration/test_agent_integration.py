@@ -187,6 +187,7 @@ prompt_files:
     assert "Please use the skill 'review' for this turn only." in str(sent_messages[1]["content"])
     assert "skill://review/checklist.md" in str(sent_messages[1]["content"])
     assert agent.messages[0].metadata["raw_user_input"] == "/skill:review Review src/demo.py for issues."
+    assert agent.messages[0].metadata["skill_trigger"]["source"] == "skill://review"
     assert agent.messages[0].metadata["skill_trigger"]["files"] == ["skill://review/checklist.md"]
 
 
