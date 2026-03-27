@@ -223,6 +223,7 @@ python -m astra --cwd <temp-workspace>
 - `/resume` 和 `/switch` 是交互停顿点，不要把后续命令一股脑批量喂进去；先等编号选择提示出现，再继续下一步
 - `/resume`/`/switch` 最好在重启后的新 CLI 进程里验证，避免把“恢复旧会话”与“当前已经加载的会话”混在一起
 - `/resume`/`/switch` 是否先恢复保存时的完整 runtime snapshot；随后 `/reload` 是否切回当前 env/YAML runtime
+- 如果你想固定一份可恢复的 runtime snapshot，再去试 `/reload` 或 `/reload code`，先执行 `/save`；`/reload` 系列命令默认只影响当前进程内运行态，不会覆盖已保存 snapshot，除非之后再次 `/save`
 - `/runtime json` 在有重复 skill 名称时是否能看到 `skills.conflicts`
 - `fork`、`rename`、`save`、`switch`、`resume` 是否真的落盘并能恢复
 - slash 命令本身不会创建空会话，只有正常用户消息或真正执行了一轮模型请求的 template 命令才会 materialize session

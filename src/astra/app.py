@@ -50,6 +50,8 @@ class AstraAppOptions:
 class AppSessionState:
     session: Session
     materialized: bool = False
+    needs_auto_save: bool = False
+    runtime_snapshot_dirty: bool = False
 
 
 @dataclass(slots=True)
@@ -282,7 +284,7 @@ class AstraApp:
         combined_warnings = list(warnings)
         combined_warnings.extend(result.warnings)
         if result.success and self._require_session_state().materialized:
-            self._persist_agent_state()
+            self._require_session_state().runtime_snapshot_dirty = True
         return ReloadResult(
             success=result.success,
             message=result.message,
@@ -447,10 +449,10 @@ class AstraApp:
         if not session_state.materialized:
             message = "No saved session to fork."
             return AppActionResult(message=message, error=None)
-        self._persist_agent_state()
         forked = self.store.fork(session_state.session.id, name=name)
         session_state.session = forked
         session_state.materialized = True
+        session_state.runtime_snapshot_dirty = False
         return AppActionResult(message=f"Forked to {forked.id}")
 
     def rename_session(self, name: str) -> AppActionResult:
@@ -458,8 +460,8 @@ class AstraApp:
         if not session_state.materialized:
             return AppActionResult(message="No saved session to rename.")
         session_state.session.name = name
-        self._persist_agent_state()
-        return AppActionResult(message=f"Renamed to {session_state.session.name}", persisted=True)
+        persisted = self._persist_session_metadata()
+        return AppActionResult(message=f"Renamed to {session_state.session.name}", persisted=persisted)
 
     def save_session(self) -> AppActionResult:
         session_state = self._require_session_state()
@@ -467,6 +469,12 @@ class AstraApp:
             return AppActionResult(message="No session to save.")
         self._persist_agent_state()
         return AppActionResult(message=f"Saved {session_state.session.id}", persisted=True)
+
+    def autosave_session(self) -> bool:
+        session_state = self._require_session_state()
+        if not session_state.materialized or not session_state.needs_auto_save:
+            return False
+        return self._persist_agent_state()
 
     def _load_runtime_config(self, cwd: Path) -> tuple[ResolvedRuntimeConfig, list[str]]:
         warnings: list[str] = []
@@ -506,6 +514,15 @@ class AstraApp:
         apply_agent_snapshot_to_session(session_state.session, agent.snapshot())
         self.store.save(session_state.session)
         session_state.materialized = True
+        session_state.needs_auto_save = False
+        session_state.runtime_snapshot_dirty = False
+        return True
+
+    def _persist_session_metadata(self) -> bool:
+        session_state = self._require_session_state()
+        if not session_state.materialized:
+            return False
+        self.store.save(session_state.session)
         return True
 
     def _restore_session(self, session: Session) -> AppActionResult:
@@ -531,6 +548,8 @@ class AstraApp:
             return AppActionResult(message=message, warnings=combined_warnings, error=message)
         session_state.session = session
         session_state.materialized = True
+        session_state.needs_auto_save = False
+        session_state.runtime_snapshot_dirty = False
         return AppActionResult(message=f"Restored {session.id}", warnings=combined_warnings)
 
     def _set_default_session_name(self, text: str) -> None:

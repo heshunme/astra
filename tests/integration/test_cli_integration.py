@@ -492,6 +492,176 @@ base_url: http://baseline-gateway/v1
     assert "model=saved-model" not in second_reload
     assert "base_url=http://saved-gateway/v1" not in second_reload
 
+    capsys.readouterr()
+    monkeypatch.setattr(
+        builtins,
+        "input",
+        InputFeeder(["/resume", "1", "/reload", "/exit"]),
+    )
+    cli.main(["--cwd", str(cwd)])
+
+    out = capsys.readouterr().out
+    second_restore, third_reload = out.split("Reloaded runtime configuration.", 1)
+    assert "Resumed hello" in second_restore
+    assert "model=saved-model" in second_restore
+    assert "base_url=http://saved-gateway/v1" in second_restore
+    assert "model=baseline-model" in third_reload
+    assert "base_url=http://baseline-gateway/v1" in third_reload
+
+
+def test_reload_after_fork_does_not_overwrite_saved_snapshot_before_next_resume(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+    _write_project_config(
+        cwd,
+        """
+model: baseline-model
+base_url: http://baseline-gateway/v1
+""",
+    )
+    _write_template(cwd, "pairing", body="Pairing template body")
+    docs_dir = cwd / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "plan.md").write_text("- verify runtime inspection\n", encoding="utf-8")
+
+    def fake_stream_chat(self, _request):
+        yield ProviderEvent(type="text_delta", delta="ok")
+        yield ProviderEvent(type="done")
+
+    monkeypatch.setattr(OpenAICompatibleProvider, "stream_chat", fake_stream_chat)
+    monkeypatch.setattr(importlib, "reload", lambda module: module)
+    monkeypatch.setattr(
+        builtins,
+        "input",
+        InputFeeder(
+            [
+                "/template:pairing Summarize docs/plan.md in one sentence.",
+                "/model smoke-model",
+                "/base-url http://gateway.local/v1",
+                "/fork child",
+                "/save",
+                "/reload",
+                "/reload code",
+                "/exit",
+            ]
+        ),
+    )
+    cli.main(["--cwd", str(cwd)])
+
+    store = SessionStore()
+    child_id = next(session.id for session in store.list() if session.name == "child")
+    capsys.readouterr()
+    monkeypatch.setattr(
+        builtins,
+        "input",
+        InputFeeder(["/model", "/base-url", "/reload", "/model", "/base-url", "/exit"]),
+    )
+    cli.main(["--cwd", str(cwd), "--session", child_id])
+
+    out = capsys.readouterr().out
+    first_restore, after_reload = out.split("Reloaded runtime configuration.", 1)
+    assert "smoke-model" in first_restore
+    assert "http://gateway.local/v1" in first_restore
+    assert "baseline-model" in after_reload
+    assert "http://baseline-gateway/v1" in after_reload
+
+
+def test_reload_then_rename_does_not_commit_reloaded_runtime(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+    _write_project_config(
+        cwd,
+        """
+model: baseline-model
+base_url: http://baseline-gateway/v1
+""",
+    )
+
+    def fake_stream_chat(self, _request):
+        yield ProviderEvent(type="text_delta", delta="ok")
+        yield ProviderEvent(type="done")
+
+    monkeypatch.setattr(OpenAICompatibleProvider, "stream_chat", fake_stream_chat)
+    monkeypatch.setattr(builtins, "input", InputFeeder(["/model saved-model", "/base-url http://saved-gateway/v1", "hello", "/exit"]))
+    cli.main(["--cwd", str(cwd)])
+
+    store = SessionStore()
+    original_id = store.list()[0].id
+    capsys.readouterr()
+
+    monkeypatch.setattr(builtins, "input", InputFeeder(["/resume", "1", "/reload", "/rename renamed", "/exit"]))
+    cli.main(["--cwd", str(cwd)])
+
+    renamed_session = store.load(original_id)
+    assert renamed_session.name == "renamed"
+    assert renamed_session.agent_snapshot is not None
+    assert renamed_session.agent_snapshot.runtime.runtime_config.model == "saved-model"
+    assert renamed_session.agent_snapshot.runtime.runtime_config.base_url == "http://saved-gateway/v1"
+
+    capsys.readouterr()
+    monkeypatch.setattr(builtins, "input", InputFeeder(["/model", "/base-url", "/exit"]))
+    cli.main(["--cwd", str(cwd), "--session", original_id])
+
+    out = capsys.readouterr().out
+    assert "saved-model" in out
+    assert "http://saved-gateway/v1" in out
+    assert "baseline-model" not in out
+    assert "http://baseline-gateway/v1" not in out
+
+
+def test_reload_then_fork_does_not_commit_reloaded_runtime(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+    _write_project_config(
+        cwd,
+        """
+model: baseline-model
+base_url: http://baseline-gateway/v1
+""",
+    )
+
+    def fake_stream_chat(self, _request):
+        yield ProviderEvent(type="text_delta", delta="ok")
+        yield ProviderEvent(type="done")
+
+    monkeypatch.setattr(OpenAICompatibleProvider, "stream_chat", fake_stream_chat)
+    monkeypatch.setattr(builtins, "input", InputFeeder(["/model saved-model", "/base-url http://saved-gateway/v1", "hello", "/exit"]))
+    cli.main(["--cwd", str(cwd)])
+
+    store = SessionStore()
+    original_id = store.list()[0].id
+    capsys.readouterr()
+
+    monkeypatch.setattr(builtins, "input", InputFeeder(["/resume", "1", "/reload", "/fork child", "/exit"]))
+    cli.main(["--cwd", str(cwd)])
+
+    sessions = store.list()
+    child_id = next(session.id for session in sessions if session.parent_session_id == original_id)
+    original_session = store.load(original_id)
+    child_session = store.load(child_id)
+    assert original_session.agent_snapshot is not None
+    assert child_session.agent_snapshot is not None
+    assert original_session.agent_snapshot.runtime.runtime_config.model == "saved-model"
+    assert original_session.agent_snapshot.runtime.runtime_config.base_url == "http://saved-gateway/v1"
+    assert child_session.agent_snapshot.runtime.runtime_config.model == "saved-model"
+    assert child_session.agent_snapshot.runtime.runtime_config.base_url == "http://saved-gateway/v1"
+
+    capsys.readouterr()
+    monkeypatch.setattr(builtins, "input", InputFeeder(["/model", "/base-url", "/exit"]))
+    cli.main(["--cwd", str(cwd), "--session", original_id])
+
+    out = capsys.readouterr().out
+    assert "saved-model" in out
+    assert "http://saved-gateway/v1" in out
+    assert "baseline-model" not in out
+    assert "http://baseline-gateway/v1" not in out
+
 
 def test_switch_command(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     cwd = tmp_path / "workspace"

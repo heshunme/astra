@@ -623,8 +623,7 @@ def main(
             run_user_prompt(app, run_streaming, line)
         except EOFError:
             print()
-            if app.has_materialized_session():
-                app.save_session()
+            app.autosave_session()
             return
         except KeyboardInterrupt:
             print()
