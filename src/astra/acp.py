@@ -374,14 +374,6 @@ class AcpServer:
 
         def on_event(event_type: str, payload: dict[str, object]) -> None:
             self._handle_agent_event(session, event_type, payload)
-
-        self._notify_session_update(
-            session.session_id,
-            {
-                "sessionUpdate": "user_message_chunk",
-                "content": {"type": "text", "text": text},
-            },
-        )
         result = session.app.submit_prompt(text, on_event=on_event)
         return self._finalize_prompt_result(session, result)
 

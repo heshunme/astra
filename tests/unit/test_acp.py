@@ -311,7 +311,6 @@ def test_prompt_streams_updates_and_returns_stop_reason(tmp_path: Path) -> None:
     response = next(message for message in messages if message.get("id") == 2)
 
     assert response["result"]["stopReason"] == "end_turn"
-    assert updates[0]["params"]["update"]["sessionUpdate"] == "user_message_chunk"
     assert any(update["params"]["update"]["sessionUpdate"] == "agent_message_chunk" for update in updates)
     assert any(update["params"]["update"]["sessionUpdate"] == "tool_call" for update in updates)
     assert any(
@@ -319,6 +318,7 @@ def test_prompt_streams_updates_and_returns_stop_reason(tmp_path: Path) -> None:
         and update["params"]["update"]["status"] == "completed"
         for update in updates
     )
+    assert not any(update["params"]["update"]["sessionUpdate"] == "user_message_chunk" for update in updates)
 
 
 def test_cancel_turn_returns_cancelled_stop_reason(tmp_path: Path) -> None:
