@@ -99,6 +99,74 @@ def test_edit_tool_rejects_skill_alias(tmp_path: Path) -> None:
         )
 
 
+def test_edit_tool_replaces_unique_match(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    file_path = workspace / "sample.txt"
+    file_path.write_text("alpha\nbeta\n", encoding="utf-8")
+
+    result = edit_tool(
+        {"path": "sample.txt", "old_text": "beta", "new_text": "gamma"},
+        _ctx(workspace),
+    )
+
+    assert not result.is_error
+    assert "1 replacement" in result.text
+    assert file_path.read_text(encoding="utf-8") == "alpha\ngamma\n"
+
+
+def test_edit_tool_rejects_ambiguous_match_without_changing_file(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    file_path = workspace / "sample.txt"
+    original = "target\nkeep target\nsame line target target\n"
+    file_path.write_text(original, encoding="utf-8")
+
+    result = edit_tool(
+        {"path": "sample.txt", "old_text": "target", "new_text": "updated"},
+        _ctx(workspace),
+    )
+
+    assert result.is_error
+    assert "found 4 matches" in result.text
+    assert "No changes were made." in result.text
+    assert "replace_all=true" in result.text
+    assert "Match line numbers: 1, 2, 3, 3" in result.text
+    assert file_path.read_text(encoding="utf-8") == original
+
+
+def test_edit_tool_replace_all_replaces_every_match(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    file_path = workspace / "sample.txt"
+    file_path.write_text("target\ntarget\ntarget\n", encoding="utf-8")
+
+    result = edit_tool(
+        {"path": "sample.txt", "old_text": "target", "new_text": "updated", "replace_all": True},
+        _ctx(workspace),
+    )
+
+    assert not result.is_error
+    assert "3 replacements" in result.text
+    assert file_path.read_text(encoding="utf-8") == "updated\nupdated\nupdated\n"
+
+
+def test_edit_tool_rejects_empty_old_text(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    file_path = workspace / "sample.txt"
+    file_path.write_text("alpha\n", encoding="utf-8")
+
+    result = edit_tool(
+        {"path": "sample.txt", "old_text": "", "new_text": "updated"},
+        _ctx(workspace),
+    )
+
+    assert result.is_error
+    assert result.text == "old_text must not be empty"
+    assert file_path.read_text(encoding="utf-8") == "alpha\n"
+
+
 def test_execute_tool_returns_timeout_for_long_bash(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()

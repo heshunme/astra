@@ -102,6 +102,17 @@ def write_tool(args: dict, ctx: ToolContext) -> ToolResult:
     return ToolResult(text=f"Wrote {path}")
 
 
+def _match_line_numbers(text: str, needle: str) -> list[int]:
+    line_numbers: list[int] = []
+    start = 0
+    while True:
+        index = text.find(needle, start)
+        if index == -1:
+            return line_numbers
+        line_numbers.append(text.count("\n", 0, index) + 1)
+        start = index + len(needle)
+
+
 def edit_tool(args: dict, ctx: ToolContext) -> ToolResult:
     path = resolve_workspace_path(ctx.workspace_root, args["path"])
     if not path.exists() or not path.is_file():
@@ -110,11 +121,24 @@ def edit_tool(args: dict, ctx: ToolContext) -> ToolResult:
     old_text = args["old_text"]
     new_text = args["new_text"]
     replace_all = bool(args.get("replace_all", False))
+    if old_text == "":
+        return ToolResult(text="old_text must not be empty", is_error=True)
     if old_text not in original:
         return ToolResult(text="old_text not found", is_error=True)
+    count = original.count(old_text)
+    if count > 1 and not replace_all:
+        line_numbers = ", ".join(str(line_number) for line_number in _match_line_numbers(original, old_text))
+        return ToolResult(
+            text=(
+                f"Ambiguous edit: found {count} matches for old_text in file `{path.name}`.\n"
+                "No changes were made.\n\n"
+                "Refine old_text to a unique match, or set replace_all=true to replace all occurrences.\n"
+                f"Match line numbers: {line_numbers}"
+            ),
+            is_error=True,
+        )
     if replace_all:
         updated = original.replace(old_text, new_text)
-        count = original.count(old_text)
     else:
         updated = original.replace(old_text, new_text, 1)
         count = 1
