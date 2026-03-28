@@ -264,6 +264,17 @@ def test_initialize_and_new_session_advertise_capabilities(tmp_path: Path) -> No
     assert any(option["id"] == "model" for option in new_response["result"]["configOptions"])
     assert commands_update["method"] == "session/update"
     assert commands_update["params"]["update"]["sessionUpdate"] == "available_commands_update"
+    command_names = [entry["name"] for entry in commands_update["params"]["update"]["availableCommands"]]
+    assert "help" in command_names
+    assert "reload" in command_names
+    assert "model" in command_names
+    assert "base-url" in command_names
+    assert "skills" in command_names
+    assert "templates" in command_names
+    assert "runtime" in command_names
+    assert "skill:review" in command_names
+    assert "template:repo-rules" in command_names
+    assert all(not name.startswith("/") for name in command_names)
 
 
 def test_prompt_streams_updates_and_returns_stop_reason(tmp_path: Path) -> None:

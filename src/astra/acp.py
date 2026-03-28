@@ -674,26 +674,26 @@ class AcpServer:
 
     def _available_commands_for_app(self, app: AstraApp) -> list[dict[str, Any]]:
         commands = [
-            {"name": "/help", "description": "Show built-in command help."},
-            {"name": "/reload", "description": "Reload runtime configuration from env and YAML."},
+            {"name": "help", "description": "Show built-in command help."},
+            {"name": "reload", "description": "Reload runtime configuration from env and YAML."},
             {
-                "name": "/model",
+                "name": "model",
                 "description": "Show or set the active model.",
                 "input": {"hint": "[name]"},
             },
             {
-                "name": "/base-url",
+                "name": "base-url",
                 "description": "Show or set the active base URL.",
                 "input": {"hint": "[url]"},
             },
-            {"name": "/skills", "description": "List available skills."},
-            {"name": "/templates", "description": "List available templates."},
-            {"name": "/runtime", "description": "Show runtime summary as JSON."},
+            {"name": "skills", "description": "List available skills."},
+            {"name": "templates", "description": "List available templates."},
+            {"name": "runtime", "description": "Show runtime summary as JSON."},
         ]
         for entry in app.get_skills():
             commands.append(
                 {
-                    "name": f"/skill:{entry.name}",
+                    "name": f"skill:{entry.name}",
                     "description": f"{entry.summary} Leave the input empty to arm it for the next turn.",
                     "input": {"hint": "[request]"},
                 }
@@ -701,7 +701,7 @@ class AcpServer:
         for name in app.get_templates():
             commands.append(
                 {
-                    "name": f"/template:{name}",
+                    "name": f"template:{name}",
                     "description": "Apply this template to one request.",
                     "input": {"hint": "<request>"},
                 }
