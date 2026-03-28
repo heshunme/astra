@@ -163,8 +163,14 @@ class AcpServer:
             return self._handle_new_session(params)
         if method == "session/load":
             return self._handle_load_session(params)
+        if method == "session/resume":
+            return self._handle_resume_session(params)
         if method == "session/list":
             return self._handle_list_sessions(params)
+        if method == "session/close":
+            return self._handle_close_session(params)
+        if method == "session/set_model":
+            return self._handle_set_model(params)
         if method == "session/set_config_option":
             return self._handle_set_config_option(params)
         raise JsonRpcError(-32601, f"Method not found: {method}")
@@ -271,10 +277,37 @@ class AcpServer:
             )
         return {"sessions": sessions, "nextCursor": None}
 
+    def _handle_resume_session(self, params: dict[str, Any]) -> dict[str, Any]:
+        # Astra restores persisted session state through the same path as load.
+        return self._handle_load_session(params)
+
+    def _handle_close_session(self, params: dict[str, Any]) -> dict[str, Any]:
+        session_id = self._require_string(params.get("sessionId"), "sessionId")
+        session = self._sessions.get(session_id)
+        if session is None:
+            return {}
+        with session.lock:
+            if session.active_request_id is not None:
+                raise JsonRpcError(-32002, "Session is busy processing a prompt")
+        self._sessions.pop(session_id, None)
+        return {}
+
+    def _handle_set_model(self, params: dict[str, Any]) -> dict[str, Any]:
+        session = self._require_session(params.get("sessionId"))
+        model_id = self._require_string(params.get("modelId"), "modelId")
+        config_options = self._apply_config_option(session, config_id="model", value=model_id)
+        self._send_config_options_update(session)
+        return {"configOptions": config_options}
+
     def _handle_set_config_option(self, params: dict[str, Any]) -> dict[str, Any]:
         session = self._require_session(params.get("sessionId"))
         config_id = self._require_string(params.get("configId"), "configId")
         value = self._require_string(params.get("value"), "value")
+        config_options = self._apply_config_option(session, config_id=config_id, value=value)
+        self._send_config_options_update(session)
+        return {"configOptions": config_options}
+
+    def _apply_config_option(self, session: AcpSession, *, config_id: str, value: str) -> list[dict[str, Any]]:
         with session.lock:
             if session.active_request_id is not None:
                 raise JsonRpcError(-32002, "Session is busy processing a prompt")
@@ -284,9 +317,7 @@ class AcpServer:
                 session.app.set_base_url(value)
             else:
                 raise JsonRpcError(-32602, f"Unsupported config option: {config_id}")
-            config_options = self._config_options_for_app(session.app)
-        self._send_config_options_update(session)
-        return {"configOptions": config_options}
+            return self._config_options_for_app(session.app)
 
     def _handle_cancel(self, params: dict[str, Any]) -> None:
         session = self._require_session(params.get("sessionId"))

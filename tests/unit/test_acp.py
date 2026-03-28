@@ -526,6 +526,101 @@ def test_set_config_option_updates_model_and_base_url_when_session_is_idle(tmp_p
     assert any(option["currentValue"] == "http://gateway/v1" for option in base_url_response["result"]["configOptions"])
 
 
+def test_set_model_alias_updates_model_and_emits_config_update(tmp_path: Path) -> None:
+    output = io.StringIO()
+    store_factory = lambda: SessionStore(base_dir=tmp_path / "sessions")
+    config_manager_factory = lambda: FakeConfigManager()
+    server = AcpServer(
+        input_stream=io.StringIO(),
+        output_stream=output,
+        app_factory=_app_factory(store_factory, config_manager_factory),
+        session_store_factory=store_factory,
+    )
+    workspace = (tmp_path / "workspace").resolve()
+    workspace.mkdir()
+    _initialize(server)
+    session_id = _create_session(server, workspace)
+    consumed = len([line for line in output.getvalue().splitlines() if line.strip()])
+
+    server.handle_message(
+        {
+            "jsonrpc": "2.0",
+            "id": 14,
+            "method": "session/set_model",
+            "params": {"sessionId": session_id, "modelId": "openai/gpt-5-mini"},
+        }
+    )
+
+    messages, _ = _drain_output(output, consumed)
+    response = next(message for message in messages if message.get("id") == 14)
+    update = next(
+        message
+        for message in messages
+        if message.get("method") == "session/update"
+        and message["params"]["update"]["sessionUpdate"] == "config_option_update"
+    )
+
+    assert any(option["currentValue"] == "openai/gpt-5-mini" for option in response["result"]["configOptions"])
+    assert any(
+        option["currentValue"] == "openai/gpt-5-mini"
+        for option in update["params"]["update"]["configOptions"]
+    )
+
+
+def test_resume_and_close_session_aliases_work_for_active_sessions(tmp_path: Path) -> None:
+    output = io.StringIO()
+    store_factory = lambda: SessionStore(base_dir=tmp_path / "sessions")
+    config_manager_factory = lambda: FakeConfigManager()
+    server = AcpServer(
+        input_stream=io.StringIO(),
+        output_stream=output,
+        app_factory=_app_factory(store_factory, config_manager_factory),
+        session_store_factory=store_factory,
+    )
+    workspace = (tmp_path / "workspace").resolve()
+    workspace.mkdir()
+    _initialize(server)
+    session_id = _create_session(server, workspace)
+    server.handle_message(
+        {
+            "jsonrpc": "2.0",
+            "id": 15,
+            "method": "session/prompt",
+            "params": {
+                "sessionId": session_id,
+                "prompt": [{"type": "text", "text": "Persist this session"}],
+            },
+        }
+    )
+    server._threads[-1].join(timeout=2)  # noqa: SLF001 - test-only inspection
+    consumed = len([line for line in output.getvalue().splitlines() if line.strip()])
+
+    server.handle_message(
+        {
+            "jsonrpc": "2.0",
+            "id": 16,
+            "method": "session/resume",
+            "params": {"sessionId": session_id, "cwd": str(workspace), "mcpServers": []},
+        }
+    )
+    server.handle_message(
+        {
+            "jsonrpc": "2.0",
+            "id": 17,
+            "method": "session/close",
+            "params": {"sessionId": session_id},
+        }
+    )
+
+    messages, _ = _drain_output(output, consumed)
+    resume_response = next(message for message in messages if message.get("id") == 16)
+    close_response = next(message for message in messages if message.get("id") == 17)
+
+    assert "configOptions" in resume_response["result"]
+    assert close_response["result"] == {}
+    assert session_id not in server._sessions  # noqa: SLF001 - test-only inspection
+
+
 def test_set_config_option_is_rejected_once_prompt_turn_has_claimed_the_session(tmp_path: Path) -> None:
     output = io.StringIO()
     store_factory = lambda: SessionStore(base_dir=tmp_path / "sessions")

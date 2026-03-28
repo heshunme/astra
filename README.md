@@ -242,9 +242,12 @@ Current ACP support:
 - `initialize`
 - `session/new`
 - `session/load`
+- `session/resume`
 - `session/list`
+- `session/close`
 - `session/prompt`
 - `session/cancel`
+- `session/set_model`
 - `session/set_config_option`
 
 Current session config options exposed through ACP:
