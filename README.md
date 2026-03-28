@@ -32,6 +32,12 @@ uv pip install -e .
 astra --model openai/gpt-5 --base-url http://your-gateway/v1
 ```
 
+To expose Astra as an Agent Client Protocol (ACP) agent over stdio JSON-RPC:
+
+```bash
+astra-acp
+```
+
 ## Codex sandbox
 
 If you run this repository inside a Codex `workspace-write` sandbox, make sure Codex is allowed to both reach the network and write to the directories that `uv` uses for caches and tool data. Add this to your Codex `config.toml`:
@@ -66,6 +72,14 @@ Longer-term architecture direction, including core-engine goals and self-evoluti
 
 The current reusable non-CLI entrypoint is the exported `AstraApp` type. `Agent` remains the lower-level coding-agent facade over the internal core engine.
 
+The repository also exports an ACP adapter entrypoint:
+
+- `astra-acp`
+  - Owns stdio JSON-RPC handling for ACP
+  - Maps ACP session lifecycle methods onto `AstraApp`
+  - Translates Astra streaming/tool events into ACP `session/update` notifications
+  - Reuses Astra's existing local workspace tools rather than client-side ACP `fs/*` or `terminal/*`
+
 For a current architecture survey in Chinese, see `docs/architecture.zh-CN.md`.
 
 ## Evolution direction
@@ -84,8 +98,8 @@ Saved sessions persist both message history and the agent snapshot needed to res
 - pending one-shot skill trigger
 - the full resolved runtime config for that session, including `model`, `base_url`, `system_prompt`, tool enablement and defaults, prompt order, and capability paths
 
-When you restore a session via `--session`, `/switch`, or `/resume`, Astra reapplies that saved runtime snapshot before continuing and re-reads the restored session's workspace `.env` and project YAML for request-time provider credentials and config fallback. `--session` and `/switch` accept either a full session id or any unique session id prefix. Use `/reload` when you explicitly want to refresh from the current session workspace's env and YAML-derived runtime.
-Interactive commands such as `/model` and `/base-url` change only the current session runtime and any snapshots saved from it; they do not replace the env/YAML-derived baseline that `/reload` and `/reload code` restore.
+When you restore a session via `--session`, `/switch`, or `/resume`, Astra reapplies that saved runtime snapshot before continuing and re-reads the restored session's workspace `.env` and project YAML for request-time provider credentials and config fallback. `--session` and `/switch` accept either a full session id or any unique session id prefix. Use `/reload` when you explicitly want to refresh the current in-memory runtime from the current session workspace's env and YAML-derived runtime.
+Interactive commands such as `/model` and `/base-url` change the current session runtime and any snapshots explicitly saved from it; they do not replace the env/YAML-derived baseline that `/reload` and `/reload code` restore. `/reload` and `/reload code` do not overwrite the saved session snapshot unless you explicitly run `/save` afterward.
 
 ## Reloadable config
 
@@ -218,6 +232,36 @@ This is the preferred way to check whether config, prompt files, and the generat
 - `/runtime`
 - `/runtime warnings`
 - `/runtime json`
+
+## ACP adapter
+
+`astra-acp` exposes Astra as an ACP agent over stdio JSON-RPC.
+
+Current ACP support:
+
+- `initialize`
+- `session/new`
+- `session/load`
+- `session/resume`
+- `session/list`
+- `session/close`
+- `session/prompt`
+- `session/cancel`
+- `session/set_model`
+- `session/set_config_option`
+
+Current session config options exposed through ACP:
+
+- `model`
+- `base_url`
+
+Current ACP behavior notes:
+
+- Prompt input supports ACP text blocks and resource links. Embedded resource blocks are accepted as a text fallback.
+- Session progress is streamed through `session/update`, including assistant text chunks, tool calls, tool call status updates, config option updates, available command updates, and session metadata updates.
+- Tool execution continues to use Astra's local workspace-scoped tools (`read`, `write`, `edit`, `grep`, `find`, `ls`, `bash`).
+- Client-side ACP file-system and terminal methods are not used yet.
+- Available slash commands are advertised through `available_commands_update`. Clients may also send those commands as plain text through `session/prompt`.
 - `/runtime prompt`
 - `/runtime json prompt`
 - `/sessions`

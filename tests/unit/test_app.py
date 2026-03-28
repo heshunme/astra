@@ -211,13 +211,13 @@ class FakeAgent:
         self.arm_skill_calls.append((name, raw_command))
         return True, f"Next message will use skill: {name}"
 
-    def run_skill(self, name: str, request_text: str, raw_command: str):
+    def run_skill(self, name: str, request_text: str, raw_command: str, *, on_event=None):
         self.run_skill_calls.append((name, request_text, raw_command))
         self.messages.append(Message(role="user", content=f"skill:{name}:{request_text}"))
         self.snapshot_value.conversation.messages = list(self.messages)
         return AgentRunResult(assistant_messages=[], tool_results=[], error=None)
 
-    def run_template(self, name: str, request_text: str, raw_command: str):
+    def run_template(self, name: str, request_text: str, raw_command: str, *, on_event=None):
         self.run_template_calls.append((name, request_text, raw_command))
         self.messages.append(Message(role="user", content=f"template:{name}:{request_text}"))
         self.snapshot_value.conversation.messages = list(self.messages)
@@ -420,7 +420,7 @@ def test_run_skill_and_template_materialize_session(tmp_path: Path) -> None:
     assert app.agent.run_template_calls == [("repo-rules", "Review file", "/template:repo-rules Review file")]
 
 
-def test_reload_runtime_merges_config_and_runtime_warnings_and_persists_saved_session(tmp_path: Path) -> None:
+def test_reload_runtime_merges_config_and_runtime_warnings_without_overwriting_saved_session(tmp_path: Path) -> None:
     app, store = _make_app(tmp_path, config_error=ConfigError("broken config"))
     app.startup()
     app.submit_prompt("hello")
@@ -431,7 +431,7 @@ def test_reload_runtime_merges_config_and_runtime_warnings_and_persists_saved_se
     assert result.success is True
     assert "broken config" in result.warnings
     assert "runtime warning" in result.warnings
-    assert store.saved_ids == ["session-1"]
+    assert store.saved_ids == []
 
 
 def test_reload_runtime_refreshes_runtime_env_from_project_dotenv(tmp_path: Path) -> None:
@@ -479,6 +479,74 @@ def test_reload_runtime_uses_restored_session_cwd_for_project_dotenv(tmp_path: P
     assert app.current_cwd() == other_cwd
     assert app.runtime_env["ANTHROPIC_API_KEY"] == "other-key-updated"
     assert app.agent.config.runtime_env["ANTHROPIC_API_KEY"] == "other-key-updated"
+
+
+def test_reload_runtime_does_not_override_saved_snapshot_or_trigger_exit_autosave(tmp_path: Path) -> None:
+    config = RuntimeConfig(model="baseline-model", base_url="http://baseline/v1")
+    app, store = _make_app(tmp_path, config=config)
+    app.startup()
+    app.submit_prompt("hello")
+    app.set_model("saved-model")
+    app.set_base_url("http://saved/v1")
+    store.saved_ids.clear()
+
+    result = app.reload_runtime()
+
+    assert result.success is True
+    assert app.get_model() == "baseline-model"
+    assert app.get_base_url() == "http://baseline/v1"
+    assert store.saved_ids == []
+    assert app.autosave_session() is False
+    saved_snapshot = store.load("session-1").agent_snapshot
+    assert saved_snapshot is not None
+    assert saved_snapshot.runtime.runtime_config.model == "saved-model"
+    assert saved_snapshot.runtime.runtime_config.base_url == "http://saved/v1"
+
+
+def test_reload_then_rename_preserves_saved_snapshot(tmp_path: Path) -> None:
+    config = RuntimeConfig(model="baseline-model", base_url="http://baseline/v1")
+    app, store = _make_app(tmp_path, config=config)
+    app.startup()
+    app.submit_prompt("hello")
+    app.set_model("saved-model")
+    app.set_base_url("http://saved/v1")
+    store.saved_ids.clear()
+
+    reload_result = app.reload_runtime()
+    rename_result = app.rename_session("renamed")
+
+    assert reload_result.success is True
+    assert rename_result.persisted is True
+    assert store.saved_ids == ["session-1"]
+    saved_snapshot = store.load("session-1").agent_snapshot
+    assert saved_snapshot is not None
+    assert saved_snapshot.runtime.runtime_config.model == "saved-model"
+    assert saved_snapshot.runtime.runtime_config.base_url == "http://saved/v1"
+    assert store.load("session-1").name == "renamed"
+
+
+def test_reload_then_fork_preserves_saved_snapshot_for_source_and_child(tmp_path: Path) -> None:
+    config = RuntimeConfig(model="baseline-model", base_url="http://baseline/v1")
+    app, store = _make_app(tmp_path, config=config)
+    app.startup()
+    app.submit_prompt("hello")
+    app.set_model("saved-model")
+    app.set_base_url("http://saved/v1")
+    store.saved_ids.clear()
+
+    reload_result = app.reload_runtime()
+    fork_result = app.fork_session("child")
+
+    assert reload_result.success is True
+    assert fork_result.message == "Forked to fork-1"
+    source_snapshot = store.load("session-1").agent_snapshot
+    child_snapshot = store.load("fork-1").agent_snapshot
+    assert source_snapshot is not None
+    assert child_snapshot is not None
+    assert source_snapshot.runtime.runtime_config.model == "saved-model"
+    assert source_snapshot.runtime.runtime_config.base_url == "http://saved/v1"
+    assert child_snapshot.runtime.runtime_config.model == "saved-model"
+    assert child_snapshot.runtime.runtime_config.base_url == "http://saved/v1"
 
 
 def test_switch_and_resume_restore_saved_session(tmp_path: Path) -> None:
